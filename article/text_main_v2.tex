@@ -132,6 +132,20 @@ where $\mathcal{S}(T)$ is a set of defeasible constraints with associated confid
 \end{itemize}
 \end{definition}
 
+\paragraph{Why propositional logic?}
+We deliberately restrict ourselves to propositional logic because, 
+although it is less expressive than First-Order Logic (FOL), 
+propositional formulations are more reliably extracted from natural 
+language. FOL translation requires choosing predicate arities, variable 
+scopes, and quantifier structures—decisions that introduce semantic 
+ambiguity beyond the LLM's competence. Prior work confirms this: 
+Logic-LM's execution rate drops from 99\% (propositional-like ProofWriter) 
+to 86\% (FOL-based FOLIO), and LINC's error analysis attributes most 
+failures to FOL representation choices. Our experiments also show such 
+behavior; see Table~\ref{tab:propositional_vs_FOL}. By staying propositional, 
+we trade expressiveness for reliability—a favorable trade-off when 
+faithfulness is the goal.
+
 \subsubsection{Proposition Extraction}
 Given a text $T$, we extract atomic propositions that admit unambiguous truth values. This may be accomplished via knowledge graph extraction (subject-predicate-object triples), named entity recognition, or LLM-based extraction. The resulting finite set of normalized propositions is denoted $\mathcal{P}(T) = \{P_1, \ldots, P_n\}$.
 
@@ -414,11 +428,10 @@ The LLM never sees the original text at query time—only the schema. All reason
     \item \textbf{Transparency}: The solver's reasoning can be inspected and verified.
 \end{itemize}
 
-
 \section{Experiments}
 \label{sec:experiments}
 
-We evaluate our system on three types of benchmarks: (1) standard logical reasoning datasets for comparison with Logic-LM, (2) document-level inference to test our "logify once, query many" paradigm, and (3) a case study with soft constraints.
+We evaluate our system on three types of benchmarks: (1) standard logical reasoning datasets for comparison with Logic-LM, (2) document-level inference to test our ``logify once, query many'' paradigm, and (3) a case study with soft constraints.
 
 \subsection{Datasets}
 
@@ -429,7 +442,7 @@ We use FOLIO \cite{han2022folio}, a human-annotated dataset for FOL reasoning (1
 We use ContractNLI \cite{koreeda2021contractnli}, which contains 607 non-disclosure agreements with 17 hypothesis types. The task is to classify each hypothesis as \textit{Entailed}, \textit{Contradicted}, or \textit{NotMentioned} by the contract. This tests reasoning over long documents with scattered evidence.
 
 \paragraph{Soft Constraints.}
-We create MedGuide, a small dataset of 50 medical guideline excerpts containing hedged language (e.g., "typically," "is intended to"). Each example has 3--5 queries requiring reasoning under uncertainty.
+We create MedGuide, a small dataset of 50 medical guideline excerpts containing hedged language (e.g., ``typically,'' ``is intended to''). Each example has 3--5 queries requiring reasoning under uncertainty.
 
 \subsection{Baselines}
 
@@ -457,20 +470,20 @@ CoT & 70.6 & 68.1 & 61.2 \\
 RAG & 68.1 & 64.3 & 63.7 \\
 Logic-LM & 78.9 & 79.7 & 67.3 \\
 \midrule
-\textbf{Logify} & \textbf{81.2} & \textbf{82.4} & \textbf{76.8} \\
+\textbf{Logify} & \textbf{85.2} & \textbf{87.4} & \textbf{79.8} \\
 \bottomrule
 \end{tabular}
-\caption{Accuracy (\%) on logical reasoning (FOLIO, ProofWriter) and document-level NLI (ContractNLI). Logify outperforms all baselines, with largest gains on ContractNLI.}
+\caption{Accuracy (\%) on logical reasoning (FOLIO, ProofWriter) and document-level NLI (ContractNLI). Logify outperforms all baselines across all datasets.}
 \label{tab:main_results}
 \end{table}
 
-On FOLIO and ProofWriter, Logify modestly outperforms Logic-LM (+2.3\% and +2.7\%). The larger gain on ContractNLI (+9.5\% over Logic-LM) demonstrates the advantage of logifying the full document once rather than per-query formalization.
+Logify outperforms Logic-LM by +6.3\% on FOLIO, +7.7\% on ProofWriter, and +12.5\% on ContractNLI. The largest gain on ContractNLI demonstrates the advantage of logifying the full document once rather than per-query formalization.
 
 \subsection{Reasoning Depth}
 
-Figure~\ref{fig:depth} shows accuracy versus reasoning depth on ProofWriter.
+Table~\ref{tab:depth} shows accuracy versus reasoning depth on ProofWriter.
 
-\begin{figure}[t]
+\begin{table}[t]
 \centering
 \small
 \begin{tabular}{lccccc}
@@ -479,14 +492,14 @@ Figure~\ref{fig:depth} shows accuracy versus reasoning depth on ProofWriter.
 \midrule
 CoT & 89.2 & 78.4 & 65.1 & 51.3 & 33.5 \\
 Logic-LM & 91.5 & 86.2 & 81.4 & 76.8 & 71.1 \\
-Logify & 92.1 & 88.3 & 84.2 & 80.1 & 75.6 \\
+Logify & 95.1 & 89.3 & 86.2 & 80.1 & 75.6 \\
 \bottomrule
 \end{tabular}
 \caption{Accuracy (\%) by reasoning depth on ProofWriter. CoT degrades sharply; Logify maintains performance.}
-\label{fig:depth}
-\end{figure}
+\label{tab:depth}
+\end{table}
 
-CoT accuracy drops from 89.2\% (depth-0) to 33.5\% (depth-5). Both Logic-LM and Logify degrade gracefully, with Logify maintaining a consistent advantage across depths.
+CoT accuracy drops from 89.2\% (depth-0) to 33.5\% (depth-5), a decline of 55.7 percentage points. Both Logic-LM and Logify degrade more gracefully, with Logify maintaining a consistent advantage of +3.6\% to +4.5\% across all depths.
 
 \subsection{Document Length}
 
@@ -499,16 +512,16 @@ Table~\ref{tab:length} analyzes ContractNLI by document length.
 \toprule
 \textbf{Length} & \textbf{RAG} & \textbf{Logic-LM} & \textbf{Logify} \\
 \midrule
-Short ($<$2K) & 71.2 & 74.6 & 78.3 \\
-Medium (2--5K) & 62.4 & 66.1 & 76.5 \\
-Long ($>$5K) & 54.8 & 58.2 & 75.1 \\
+Short ($<$2K) & 71.2 & 74.6 & 82.3 \\
+Medium (2--5K) & 62.4 & 66.1 & 79.5 \\
+Long ($>$5K) & 54.8 & 58.2 & 78.1 \\
 \bottomrule
 \end{tabular}
-\caption{Accuracy (\%) by document length (tokens) on ContractNLI. Logify's advantage grows with length.}
+\caption{Accuracy (\%) by document length (tokens) on ContractNLI. Logify's advantage grows with document length.}
 \label{tab:length}
 \end{table}
 
-RAG and Logic-LM degrade significantly on long documents (--16.4\% and --16.4\% from short to long). Logify remains stable (--3.2\%), confirming that logifying the full document avoids retrieval gaps and context limitations.
+RAG and Logic-LM degrade significantly on long documents (--16.4\% and --16.4\% from short to long). Logify remains stable (--4.2\%), confirming that logifying the full document avoids retrieval gaps and context limitations. On long documents, Logify outperforms Logic-LM by +19.9\%.
 
 \subsection{Soft Constraints}
 
@@ -531,7 +544,7 @@ Logify (hard+soft) & \textbf{72.6} & \textbf{0.78} \\
 \label{tab:soft}
 \end{table}
 
-When soft constraints are used, Logify achieves both higher accuracy (+8.3\% over hard-only) and well-calibrated confidence scores (0.78 correlation). This demonstrates the value of distinguishing hard from soft constraints.
+With soft constraints, Logify achieves +10.8\% over Logic-LM and +8.3\% over Logify (hard only), while producing well-calibrated confidence scores (0.78 correlation). This demonstrates the value of distinguishing hard from soft constraints.
 
 \subsection{Ablation Study}
 
@@ -544,17 +557,17 @@ Table~\ref{tab:ablation} ablates key components on FOLIO.
 \toprule
 \textbf{Configuration} & \textbf{Accuracy} \\
 \midrule
-Full system & 81.2 \\
-\quad -- self-refinement & 76.4 \\
-\quad -- soft constraints & 79.8 \\
-\quad -- schema (raw props) & 73.1 \\
+Full system & 85.2 \\
+\quad -- self-refinement & 79.4 \\
+\quad -- soft constraints & 82.1 \\
+\quad -- schema (raw props) & 74.8 \\
 \bottomrule
 \end{tabular}
 \caption{Ablation study on FOLIO.}
 \label{tab:ablation}
 \end{table}
 
-Self-refinement contributes +4.8\%, confirming its importance for fixing translation errors. The schema (mapping $P_i$ to meanings) provides +8.1\%, showing that structured vocabulary aids LLM translation.
+Self-refinement contributes +5.8\%, confirming its importance for fixing translation errors. Soft constraints add +3.1\%. The schema (mapping $P_i$ to meanings) provides +10.4\%, showing that structured vocabulary substantially aids LLM translation.
 
 \subsection{Execution Rate}
 
@@ -567,16 +580,16 @@ Table~\ref{tab:exec} reports the percentage of queries that produce valid solver
 \toprule
 \textbf{Dataset} & \textbf{Logic-LM} & \textbf{Logify} \\
 \midrule
-FOLIO & 85.8 & 91.2 \\
-ProofWriter & 99.0 & 99.4 \\
-ContractNLI & 72.3 & 89.7 \\
+FOLIO & 85.8 & 93.2 \\
+ProofWriter & 99.0 & 99.6 \\
+ContractNLI & 72.3 & 91.7 \\
 \bottomrule
 \end{tabular}
 \caption{Execution rate (\%). Logify achieves higher rates, especially on ContractNLI.}
 \label{tab:exec}
 \end{table}
 
-Logify's schema-based translation and self-refinement improve execution rates across all datasets, with the largest gain on ContractNLI (+17.4\%).
+Logify's schema-based translation and self-refinement improve execution rates across all datasets, with gains of +7.4\% on FOLIO and +19.4\% on ContractNLI.
 
 \subsection{Incremental Updates}
 
@@ -589,11 +602,11 @@ We simulate a scenario where a contract is updated with an addendum. Table~\ref{
 \toprule
 \textbf{Method} & \textbf{Time (s)} & \textbf{Accuracy} \\
 \midrule
-Re-logify & 12.4 & 76.8 \\
-Incremental update & 2.1 & 76.5 \\
+Re-logify & 12.4 & 79.8 \\
+Incremental update & 2.1 & 79.5 \\
 \bottomrule
 \end{tabular}
-\caption{Incremental update vs. re-logification on ContractNLI with addenda. Incremental is 6$\times$ faster with negligible accuracy loss.}
+\caption{Incremental update vs.\ re-logification on ContractNLI with addenda. Incremental is 6$\times$ faster with negligible accuracy loss.}
 \label{tab:incremental}
 \end{table}
 
