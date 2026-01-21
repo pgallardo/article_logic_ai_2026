@@ -10,8 +10,8 @@ logic-aware-extraction/
 │   ├── propositions.py         # Extract propositions
 │   ├── constraints.py          # Extract hard/soft constraints
 │   ├── weights.py              # Assign weights
-│   ├── schema.py               # Build dictionary
-│   └── update.py               # Add new text/propositions/constraints
+│   ├── schema.py               # A dictionary from P_i to the actual sentences from the text.
+│   └── update.py               # Add new text/propositions/constraints (not  a priority)
 │
 ├── logic_solver/               # All logic calculations
 │   ├── init.py
