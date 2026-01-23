@@ -14,13 +14,18 @@ class OpenIEExtractor:
     """Extracts relation triples from text using Stanford CoreNLP OpenIE."""
 
     def __init__(self):
-        """Initialize the Stanford OpenIE extractor."""
-        print("Initializing Stanford OpenIE...")
+        """Initialize the Stanford OpenIE extractor with coreference resolution."""
+        print("Initializing Stanford OpenIE with coreference resolution...")
         try:
-            self.openie = StanfordOpenIE()
-            print("Stanford OpenIE initialization complete.")
+            # Enable coreference resolution using Stanford OpenIE API
+            properties = {
+                'openie.resolve_coref': True
+            }
+            self.openie = StanfordOpenIE(properties=properties)
+            self.coref_enabled = True
+            print("Stanford OpenIE initialization complete with coreference resolution enabled.")
         except Exception as e:
-            print(f"Error initializing Stanford OpenIE: {e}")
+            print(f"Error initializing Stanford OpenIE with coref: {e}")
             raise RuntimeError(f"Failed to initialize Stanford OpenIE: {e}")
 
     def extract_triples(self, text: str) -> List[Dict[str, Any]]:
