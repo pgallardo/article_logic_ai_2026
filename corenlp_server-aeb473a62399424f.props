@@ -1,8 +1,8 @@
-annotators = openie
+annotators = tokenize,ssplit,pos,lemma,ner,depparse,coref,openie
 
 outputFormat = serialized
 
 serializer = edu.stanford.nlp.pipeline.ProtobufAnnotationSerializer
 
-openie.resolve_coref = True
+openie.resolve_coref = true
 
