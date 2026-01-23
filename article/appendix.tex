@@ -1,0 +1,161 @@
+
+\section{Appendix}
+
+\subsection{Weights for soft constrains}
+\label{sec:weights}
+
+Next, we describe a method for assigning weights to soft constraints $Q$ using SBERT Retrieval and  Natural Language Inference (NLI) Reranking. The weight \(w(Q)\in(0,1)\) that reflects how strongly the document supports \(Q\) versus contradicts \(Q\). It uses the following tools:
+\begin{itemize}
+\item \textbf {A bi-encoder} sentence embedding model (e.g., SBERT) for fast retrieval of relevant segments.
+\item \textbf{An NLI cross-encoder} (Natural Language Inference) to score entailment vs contradiction on only a small set of retrieved segments.
+\item \textbf{Log-sum-exp pooling} to aggregate evidence robustly (less brittle than max pooling).
+\item \textbf{A final sigmoid} transform to map pooled evidence to a probability-like weight.
+\end{itemize}
+The resulting weight is an evidence score, not a statistically calibrated probability. It is obtained from the following algorithm
+\begin{itemize}
+    \item[1.]
+    Given a soft constraint $Q$ from  a natural-language hypothesis sentence $h$.
+We can generate a small set of paraphrases (phrases with the same meaning)
+\[
+\mathcal{H}(Q) = \{h_1,\dots,h_r\},
+\]
+where $r\in[1,10]$. These paraphrases improve recall; and they are optional.
+\item[2.] Let $e(\cdot)$ be the SBERT embedding function. We precompute embeddings for all segments:
+\[
+v_i = e(s_i)\quad\text{for } i=1,\dots,m.
+\]
+
+For each hypothesis $h_j$, compute its embedding $u_j = e(h_j)$ and retrieve the top-$K$ segments by cosine similarity:
+\[
+E_j = \text{TopK}_{s_i\in S(T)} \cos(u_j, v_i).
+\]
+Then form the union of retrieved candidates and deduplicate:
+\[
+E = \bigcup_{j=1}^r E_j,
+\]
+optionally truncating to a maximum total budget $K_{\text{total}}$ (e.g., 50) by keeping the highest-similarity unique segments.
+\item For each candidate premise segment $p \in E$ and hypothesis $h_j \in \mathcal{H}(Q)$, run an NLI cross-encoder:
+\[
+(z_{\text{ent}}(p,h_j), z_{\text{con}}(p,h_j), z_{\text{neu}}(p,h_j)) \in \mathbb{R}^3.
+\]
+
+Here: $z_{\text{ent}}$ is the entailment logit score.  $z_{\text{con}}$ is the contradiction logit score.  $z_{\text{neu}}$ is the neutral logit score.
+\item We reduce the 3-way output to a single scalar \textbf{evidence difference}:
+\[
+d(p,h_j) := z_{\text{ent}}(p,h_j) - z_{\text{con}}(p,h_j).
+\]
+This last choice improve stability of the results, and it has the  interpretation:
+\begin{itemize}
+    \item $d(p,h_j) > 0$: this segment supports the constraint.
+    \item $d(p,h_j) < 0$: this segment contradicts the constraint.
+    \item $|d|$: strength of evidence.
+\end{itemize}
+For each premise segment $p$, keep the best paraphrase match:
+\[
+d(p) := \max_{h_j \in \mathcal{H}(Q)} d(p,h_j).
+\]
+This yields a set of evidence scores $\{d(p): p\in E\}$.
+\item A naive max over $d(p)$ is brittle (one spurious segment can dominate). We instead use \textbf{log-sum-exp pooling}, which is a smooth approximation of max.
+Let $E=\{p_1,\dots,p_K\}$ after deduplication/truncation. Define:
+\[
+D(Q;T) \;:=\; \frac{1}{\tau}\log\left(\frac{1}{K}\sum_{i=1}^{K} \exp(\tau\, d(p_i))\right),
+\]
+where $\tau>0$ is a temperature parameter controlling how ``max-like'' the pooling is:
+\begin{itemize}
+    \item small $\tau \to$ closer to an average,
+    \item large $\tau \to$ closer to a max.
+\end{itemize}
+The recommended default is $\tau \in [1,5]$, e.g., $\tau=2$.
+\item Convert pooled evidence $D(Q;T)$ into a probability-like weight with a sigmoid:
+\[
+w(Q) \;:=\; \sigma(D(Q;T)) \;=\; \frac{1}{1+\exp(-D(Q;T))}.
+\]
+
+Interpretation:
+\begin{itemize}
+    \item $w(Q)\approx 1$: strong supporting evidence exists and dominates.
+    \item $w(Q)\approx 0$: strong contradictory evidence exists and dominates.
+    \item $w(Q)\approx 0.5$: overall neutral / mixed / insufficient evidence.
+\end{itemize}
+\end{itemize}
+This $w(Q)$ is used as the soft constraint weight in downstream reasoning (e.g., in a likelihood factor $\lambda(\varphi)$ that prefers readings satisfying $Q$).
+
+\paragraph{Algorithm Summary:}
+We complete the following steps
+\\
+\textbf{Step 1:} Preprocessing (once per document)
+
+\begin{enumerate}
+    \item Segment the document $T$ into segments $S(T)=\{s_i\}$.
+    \item Compute SBERT embeddings $v_i = e(s_i)$ for all segments.
+    \item Build an ANN index for fast top-$K$ similarity search (optional but recommended).
+\end{enumerate}
+
+\textbf{Step 2:} Per soft constraint $Q$
+
+\begin{enumerate}
+    \item Create hypothesis set $\mathcal{H}(Q)=\{h_1,\dots,h_r\}$ (optionally $r>1$ via paraphrases).
+    \item For each $h_j$, retrieve top-$K$ segments $E_j$ by SBERT similarity.
+    \item Form $E = \cup_j E_j$, deduplicate, and cap to $K_{\text{total}}$.
+    \item For each $p\in E$, compute NLI logits against each $h_j$ and set
+    \[
+    d(p) = \max_{h_j} (z_{\text{ent}}(p,h_j) - z_{\text{con}}(p,h_j)).
+    \]
+    \item Aggregate with log-sum-exp pooling:
+    \[
+    D = \frac{1}{\tau}\log\left(\frac{1}{|E|}\sum_{p\in E} \exp(\tau d(p))\right).
+    \]
+    \item Output weight:
+    \[
+    w(Q)=\sigma(D).
+    \]
+\end{enumerate}
+
+\textbf{Defaults:} We use the following settings.
+
+\begin{itemize}
+    \item Segments: short paragraphs (1–5 sentences).
+    \item Paraphrases: $r=5$ (or $r=1$ if cost-sensitive).
+    \item SBERT retrieval: $K=20$ per paraphrase.
+    \item Deduplicated budget: $K_{\text{total}}=50$.
+    \item NLI model: any 3-way entailment/contradiction/neutral cross
+
+
+
+\subsection{Comparing proposition versus FOL logic}
+
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+\textbf{Dataset} & \textbf{Logic-LM Exec} & \textbf{Logify Exec} \\
+\midrule
+ProofWriter (prop-like) & 99.0 & 99.4 \\
+FOLIO (FOL) & 85.8 & 91.2 \\
+\bottomrule
+\end{tabular}
+\caption{Execution rates. Propositional-like tasks achieve near-perfect translation.}
+\label{tab:propositional_vs_FOL}
+\end{table}
+
+\subsection{Usage Modes}
+\label{sec:usage}
+
+The system supports two primary modes:
+
+\paragraph{Logify mode.}
+Create a new logified structure from text:
+\begin{verbatim}
+python main.py from_text_to_logic --text "document.txt"
+\end{verbatim}
+
+\paragraph{Query mode.}
+Ask questions, optionally adding new text:
+\begin{verbatim}
+python main.py query --query "Is X true?"
+python main.py query --query "Is X true?" --text "additional_text.txt"
+\end{verbatim}
+
+In query mode with additional text, the system first updates the logified structure (Section~\ref{sec:from_text_to_logic}), then processes the query.
