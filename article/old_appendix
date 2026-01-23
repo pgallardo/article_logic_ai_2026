@@ -124,7 +124,7 @@ This $w(Q)$ is used as the soft constraint weight in downstream reasoning (e.g.,
     \item SBERT retrieval: $K=20$ per paraphrase.
     \item Deduplicated budget: $K_{\text{total}}=50$.
     \item NLI model: any 3-way entailment/contradiction/neutral cross
-
+\end{itemize}
 \subsubsection{LLM perspective}
 \label{sec:weights_LLM}
 Our first approach leverages a two-step calibration procedure using a combination of a less expensive language model (LLM) and a more advanced model on a representative subset of constraints.
