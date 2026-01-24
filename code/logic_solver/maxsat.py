@@ -217,6 +217,11 @@ class LogicSolver:
             return entailment_result
         else:
             # UNCERTAIN: Query is neither entailed nor contradicted
+            # But first check if there was an error
+            if "Error" in entailment_result.explanation:
+                # Propagate the error
+                return entailment_result
+
             # Check consistency to refine the answer
             consistency_result = self.check_consistency(query_formula)
 
@@ -228,6 +233,10 @@ class LogicSolver:
                     explanation="Query is contradicted by the knowledge base"
                 )
             else:
+                # Check if consistency had an error
+                if "Error" in consistency_result.explanation:
+                    return consistency_result
+
                 # Query is consistent but not entailed
                 # Return uncertainty with confidence from soft constraints
                 avg_confidence = (entailment_result.confidence + consistency_result.confidence) / 2
