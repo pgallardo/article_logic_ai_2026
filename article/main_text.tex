@@ -1,16 +1,5 @@
 \begin{abstract}
-We propose a framework for faithful logical reasoning over natural-language text. 
-Given a text $T$, our system first \emph{logifies} it: a pipeline $\Pi$ extracts 
-atomic propositions together with hard constraints (which must hold) and soft 
-constraints (which express defeasible tendencies with associated confidences). 
-The hard constraints define a space of consistent \emph{readings} of the text; 
-the soft constraints rank these readings by plausibility. This logified structure 
-is built once and supports repeated querying via a symbolic solver, enabling 
-consistency checking, consequence evaluation, and quantification of what the text 
-leaves undetermined. We ground our approach in Boolean algebra and weighted 
-Max-SAT, providing both theoretical guarantees and a practical system. A key 
-methodological point is representation dependence: all claims about consistency 
-or consequence are stated relative to the pair $(T, \Pi)$.
+We propose a neuro-symbolic framework for logical reasoning over long-form documents (e.g., contracts, specifications) relative to an explicit extraction pipeline. Rather than retrieving passages at query time, we compile the document once into a logified representation: atomic propositions with hard (mandatory) constraints and weighted soft constraints that rank plausible readings. This "logify once, query many" paradigm supports repeated reasoning via SAT-based solving and a Boolean-algebraic formalization, without re-processing the raw text. On long-document benchmarks with non-local constraints, we improve over RAG baselines while providing solver-checkable outputs and conditional correctness guarantees given the extracted theory.
 \end{abstract}
 
 \section{Introduction}
