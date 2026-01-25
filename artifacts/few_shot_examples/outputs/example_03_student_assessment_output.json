@@ -66,26 +66,11 @@
     },
     {
       "id": "H_3",
-      "formula": "P_7 ⟹ P_8",
-      "translation": "If a deadline extension is approved, then documented extenuating circumstances are required (i.e., must be present).",
-      "evidence": "Sentence 3: \"... approval requires documented extenuating circumstances.\"",
-      "reasoning": "\"Requires\" states a necessary condition for approval."
-    },
-    {
-      "id": "H_4",
-      "formula": "⊤ ⟹ (P_6 ∨ ¬P_6)",
-      "translation": "Students are permitted to request deadline extensions (the policy allows such requests).",
-      "evidence": "Sentence 3: \"Students may request deadline extensions ...\"",
-      "reasoning": "\"May\" establishes that requesting extensions is permitted under the policy. This is a hard fact about what the policy allows, not a probabilistic statement. The formula states that requesting is always an available option (tautologically true, but captures the permission)."
+      "formula": "P_7 ⟺ (P_6 ∧ P_8)",
+      "translation": "A deadline extension is approved if and only if a student requests it and has documented extenuating circumstances.",
+      "evidence": "Sentence 3: \"Students may request deadline extensions, though approval requires documented extenuating circumstances.\"",
+      "reasoning": "This makes explicit the full biconditional: approval requires both a request and documented circumstances. The original text states approval requires documented circumstances (necessity), and logically approval also requires a request to exist in the first place. Together these form a complete definition of when approval occurs."
     }
   ],
-  "soft_constraints": [
-    {
-      "id": "S_1",
-      "formula": "P_8 ⟹ P_7",
-      "translation": "If a student has documented extenuating circumstances, their deadline extension request is (likely) approved.",
-      "evidence": "Common-sense inference from Sentence 3: approval requires documented extenuating circumstances (a necessary condition, but not stated as sufficient).",
-      "reasoning": "The text only states necessity (approved ⇒ documented circumstances). Sufficiency (documented circumstances ⇒ approved) is plausible but not guaranteed, so it is soft."
-    }
-  ]
+  "soft_constraints": []
 }
