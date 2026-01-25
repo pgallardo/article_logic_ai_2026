@@ -26,7 +26,30 @@ def chunk_document(text, chunk_size=512, overlap=50):
             - 'end_pos': ending character position in original document
             - 'chunk_id': sequential chunk identifier
     """
-    pass
+    tokens = tokenize(text)
+    chunks = []
+    chunk_id = 0
+
+    start_idx = 0
+    while start_idx < len(tokens):
+        end_idx = min(start_idx + chunk_size, len(tokens))
+        chunk_tokens = tokens[start_idx:end_idx]
+        chunk_text = detokenize(chunk_tokens)
+
+        char_start = len(detokenize(tokens[:start_idx]))
+        char_end = len(detokenize(tokens[:end_idx]))
+
+        chunks.append({
+            'text': chunk_text,
+            'start_pos': char_start,
+            'end_pos': char_end,
+            'chunk_id': chunk_id
+        })
+
+        chunk_id += 1
+        start_idx += chunk_size - overlap
+
+    return chunks
 
 
 def tokenize(text):
@@ -39,7 +62,7 @@ def tokenize(text):
     Returns:
         List of tokens
     """
-    pass
+    return text.split()
 
 
 def detokenize(tokens):
@@ -52,4 +75,4 @@ def detokenize(tokens):
     Returns:
         Reconstructed text string
     """
-    pass
+    return ' '.join(tokens)
