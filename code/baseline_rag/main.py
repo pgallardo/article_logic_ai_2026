@@ -174,9 +174,6 @@ def process_single_example(example, chunk_embeddings, chunks, sbert_model, llm_m
             - 'reasoning': Chain-of-thought reasoning (string)
             - 'retrieved_chunks': Chunks used for reasoning (list of dicts)
     """
-    from retriever import encode_query, retrieve
-    from reasoner import reason_with_cot
-
     query = example['query']
 
     query_embedding = encode_query(query, sbert_model)
@@ -205,8 +202,21 @@ def save_results(results, output_path):
     """
     import json
 
+    serializable_results = {
+        'metrics': {
+            'accuracy': results['metrics']['accuracy'],
+            'precision': results['metrics']['precision'],
+            'recall': results['metrics']['recall'],
+            'f1': results['metrics']['f1'],
+            'confusion_matrix': {f"{k[0]}__{k[1]}": v for k, v in results['metrics']['confusion_matrix'].items()},
+            'per_class_metrics': results['metrics']['per_class_metrics']
+        },
+        'predictions': results['predictions'],
+        'examples': results['examples']
+    }
+
     with open(output_path, 'w') as f:
-        json.dump(results, f, indent=2)
+        json.dump(serializable_results, f, indent=2)
 
     print(f"Results saved to {output_path}")
 
