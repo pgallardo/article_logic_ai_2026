@@ -70,18 +70,18 @@
       "translation": "If a deadline extension is approved, then documented extenuating circumstances are required (i.e., must be present).",
       "evidence": "Sentence 3: \"... approval requires documented extenuating circumstances.\"",
       "reasoning": "\"Requires\" states a necessary condition for approval."
+    },
+    {
+      "id": "H_4",
+      "formula": "⊤ ⟹ (P_6 ∨ ¬P_6)",
+      "translation": "Students are permitted to request deadline extensions (the policy allows such requests).",
+      "evidence": "Sentence 3: \"Students may request deadline extensions ...\"",
+      "reasoning": "\"May\" establishes that requesting extensions is permitted under the policy. This is a hard fact about what the policy allows, not a probabilistic statement. The formula states that requesting is always an available option (tautologically true, but captures the permission)."
     }
   ],
   "soft_constraints": [
     {
       "id": "S_1",
-      "formula": "P_6",
-      "translation": "Students may request deadline extensions (requesting an extension is permitted/possible).",
-      "evidence": "Sentence 3: \"Students may request deadline extensions ...\"",
-      "reasoning": "\"May\" expresses permission/possibility rather than an obligation; it does not force a request to occur."
-    },
-    {
-      "id": "S_2",
       "formula": "P_8 ⟹ P_7",
       "translation": "If a student has documented extenuating circumstances, their deadline extension request is (likely) approved.",
       "evidence": "Common-sense inference from Sentence 3: approval requires documented extenuating circumstances (a necessary condition, but not stated as sufficient).",
