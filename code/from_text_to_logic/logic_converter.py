@@ -67,7 +67,7 @@ class LogicConverter:
 {text}
 >>>
 
-OPENIE TRIPLES:
+RELATION TRIPLES:
 <<<
 {formatted_triples}
 >>>"""

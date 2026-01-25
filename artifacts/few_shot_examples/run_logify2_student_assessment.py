@@ -48,8 +48,8 @@ def main():
             source = triple.get('source', 'unknown')
             print(f"   Source: {source}")
 
-        # Format triples for LLM
-        formatted_triples = extractor.format_triples(openie_triples)
+        # Format triples for LLM (using JSON array format to match prompt)
+        formatted_triples = extractor.format_triples_json(openie_triples, indent=0)
 
         # Save triples to file
         triples_output = '/workspace/repo/artifacts/few_shot_examples/outputs/example_03_student_assessment_triples.json'
