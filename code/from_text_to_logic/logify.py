@@ -201,13 +201,15 @@ def main():
             max_tokens=args.max_tokens
         )
 
-        # Convert text to logic
+        # Convert text to logic (triples extracted inside this call)
+        logic_structure = converter.convert_text_to_logic(text)
+
+        # Print conversion parameters after triple extraction
         print(f"\nConverting to logic structure...")
         print(f"  Model: {args.model}")
         print(f"  Temperature: {args.temperature}")
         print(f"  Reasoning effort: {args.reasoning_effort}")
         print(f"  Max tokens: {args.max_tokens}")
-        logic_structure = converter.convert_text_to_logic(text)
 
         # Save output
         converter.save_output(logic_structure, args.output)
