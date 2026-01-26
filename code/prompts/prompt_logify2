@@ -44,8 +44,9 @@ STEP 3: Extract Hard Constraints
 
 STEP 4: Extract Soft Constraints
 - Extract propositional formulas that might hold (defeasible/probabilistic statements)
+- These formulas might not be explicitly stated in the text, but are relevant to the structural logic and can be obtained from common-sense
 - Include textual evidence if from text, or common-sense justification otherwise
-- Ensure faithfulness to text intent
+- Ensure faithfulness to text intent to settle ambiguities; e.g. if the word "should" refers to an obligation or requirement then it suggests a hard constraint; but if it used to suggest that it doesn't have to hold, based off other parts of the text, then it can be a soft constraint
 - Include reasoning for soft designation
 
 STEP 5: Double Check
