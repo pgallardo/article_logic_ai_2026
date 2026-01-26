@@ -343,19 +343,81 @@ def run_batch(examples, model_name=MODEL_NAME, config=None,
     }
 
 
-def load_dataset(dataset_name, data_dir='data'):
+def load_dataset(dataset_name, data_dir='data', use_huggingface=True):
     """
-    Load dataset (FOLIO, ProofWriter, or AR-LSAT).
+    Load dataset from HuggingFace or local files (FOLIO, ProofWriter, or AR-LSAT).
 
     Args:
         dataset_name: str, 'folio', 'proofwriter', or 'ar-lsat'
-        data_dir: str, directory containing dataset files
+        data_dir: str, directory containing local dataset files (fallback)
+        use_huggingface: bool, if True load from HuggingFace Hub
 
     Returns:
         List[dict], each with 'text', 'query', 'ground_truth'
     """
     dataset_name = dataset_name.lower()
 
+    if use_huggingface:
+        try:
+            from datasets import load_dataset as hf_load_dataset
+
+            # Map to HuggingFace dataset names
+            hf_names = {
+                'folio': 'yale-nlp/FOLIO',
+                'proofwriter': 'allenai/proofwriter',
+                'ar-lsat': 'allenai/ar-lsat'
+            }
+
+            if dataset_name not in hf_names:
+                raise ValueError(f"Unknown dataset: {dataset_name}")
+
+            print(f"Loading dataset from HuggingFace: {hf_names[dataset_name]}")
+
+            # Load from HuggingFace
+            dataset = hf_load_dataset(hf_names[dataset_name], split='test')
+
+            # Normalize format
+            examples = []
+            for item in dataset:
+                # Different datasets have different field names
+                if dataset_name == 'folio':
+                    example = {
+                        'text': item.get('premises', item.get('context', '')),
+                        'query': item.get('conclusion', item.get('question', '')),
+                        'ground_truth': item.get('label', item.get('answer'))
+                    }
+                elif dataset_name == 'proofwriter':
+                    example = {
+                        'text': item.get('theory', item.get('context', '')),
+                        'query': item.get('question', ''),
+                        'ground_truth': item.get('answer', item.get('label'))
+                    }
+                elif dataset_name == 'ar-lsat':
+                    example = {
+                        'text': item.get('context', item.get('passage', '')),
+                        'query': item.get('question', ''),
+                        'ground_truth': item.get('answer', item.get('label'))
+                    }
+                else:
+                    # Generic fallback
+                    example = {
+                        'text': item.get('premises', item.get('context', item.get('text', ''))),
+                        'query': item.get('conclusion', item.get('question', item.get('query', ''))),
+                        'ground_truth': item.get('label', item.get('answer'))
+                    }
+                examples.append(example)
+
+            print(f"Loaded {len(examples)} examples from HuggingFace")
+            return examples
+
+        except ImportError:
+            print("HuggingFace datasets library not installed. Falling back to local files.")
+            print("Install with: pip install datasets")
+        except Exception as e:
+            print(f"Error loading from HuggingFace: {e}")
+            print("Falling back to local files.")
+
+    # Fallback to local files
     if dataset_name == 'folio':
         file_path = os.path.join(data_dir, 'folio_test.json')
     elif dataset_name == 'proofwriter':
@@ -367,7 +429,13 @@ def load_dataset(dataset_name, data_dir='data'):
 
     # Check if file exists
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Dataset file not found: {file_path}")
+        raise FileNotFoundError(
+            f"Dataset file not found: {file_path}\n"
+            f"Either install HuggingFace datasets (pip install datasets) "
+            f"or place dataset files in {data_dir}/"
+        )
+
+    print(f"Loading dataset from local file: {file_path}")
 
     # Load dataset
     with open(file_path, 'r') as f:
@@ -383,6 +451,7 @@ def load_dataset(dataset_name, data_dir='data'):
         }
         examples.append(example)
 
+    print(f"Loaded {len(examples)} examples from local file")
     return examples
 
 
