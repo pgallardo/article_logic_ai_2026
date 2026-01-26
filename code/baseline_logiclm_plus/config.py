@@ -16,7 +16,7 @@ Design decisions (from Logic-LM++ paper, ACL 2024):
 """
 
 # Model configuration
-MODEL_NAME = "openai/gpt-4"
+MODEL_NAME = "gpt-4"  # Fixed: removed "openai/" prefix for API compatibility
 TEMPERATURE = 0
 MAX_TOKENS = 2048
 

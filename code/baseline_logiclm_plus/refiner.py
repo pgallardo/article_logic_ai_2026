@@ -192,8 +192,9 @@ def pairwise_compare(formulation_a, formulation_b, original_text, original_query
     )
 
     # Call LLM
+    client = OpenAI()
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=temperature,
@@ -243,8 +244,9 @@ def backtracking_decision(previous_formulation, refined_formulation, original_te
     )
 
     # Call LLM
+    client = OpenAI()
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=temperature,
