@@ -127,11 +127,7 @@ from solver_interface import solve_fol
 
 
 def run_logiclm_plus(text, query, model_name=MODEL_NAME, ground_truth=None,
-                     max_iterations=MAX_REFINEMENT_ITERATIONS,
-                     solver='z3', solver_timeout=SOLVER_TIMEOUT,
-                     temperature=TEMPERATURE,
-                     num_candidates=NUM_REFINEMENT_CANDIDATES,
-                     max_consecutive_backtracks=MAX_CONSECUTIVE_BACKTRACKS):
+                     config=None, **kwargs):
     """
     End-to-end Logic-LM++ pipeline for single example.
 
@@ -140,16 +136,35 @@ def run_logiclm_plus(text, query, model_name=MODEL_NAME, ground_truth=None,
         query: str, natural language query (conclusion to test)
         model_name: str, LLM model name
         ground_truth: str, ground truth answer (for evaluation)
-        max_iterations: int, maximum refinement iterations
-        solver: str, 'prover9' or 'z3'
-        solver_timeout: int, solver timeout in seconds
-        temperature: float, sampling temperature
-        num_candidates: int, number of refinement candidates per iteration
-        max_consecutive_backtracks: int, early stop threshold
+        config: dict, optional configuration dict with keys:
+                - max_iterations: int, maximum refinement iterations
+                - solver: str, 'prover9' or 'z3'
+                - solver_timeout: int, solver timeout in seconds
+                - temperature: float, sampling temperature
+                - num_candidates: int, number of refinement candidates per iteration
+                - max_consecutive_backtracks: int, early stop threshold
+        **kwargs: individual parameters (override config if both provided)
 
     Returns:
         dict with comprehensive results (see module docstring for format)
     """
+    # Merge config dict with defaults
+    if config is None:
+        config = {}
+
+    max_iterations = kwargs.get('max_iterations',
+                                config.get('max_iterations', MAX_REFINEMENT_ITERATIONS))
+    solver = kwargs.get('solver', config.get('solver', 'z3'))
+    solver_timeout = kwargs.get('solver_timeout',
+                               config.get('solver_timeout', SOLVER_TIMEOUT))
+    temperature = kwargs.get('temperature',
+                           config.get('temperature', TEMPERATURE))
+    num_candidates = kwargs.get('num_candidates',
+                               config.get('num_candidates', NUM_REFINEMENT_CANDIDATES))
+    max_consecutive_backtracks = kwargs.get('max_consecutive_backtracks',
+                                           config.get('max_consecutive_backtracks',
+                                                     MAX_CONSECUTIVE_BACKTRACKS))
+
     start_time = time.time()
     time_breakdown = {
         'formalization': 0,
@@ -257,18 +272,18 @@ def run_logiclm_plus(text, query, model_name=MODEL_NAME, ground_truth=None,
     }
 
 
-def run_batch(examples, model_name=MODEL_NAME, max_iterations=MAX_REFINEMENT_ITERATIONS,
-              solver='z3', output_dir=None, save_interval=10):
+def run_batch(examples, model_name=MODEL_NAME, config=None,
+              output_dir=None, save_interval=10, **kwargs):
     """
     Process multiple examples, save intermediate results.
 
     Args:
         examples: List[dict], each with 'text', 'query', 'ground_truth'
         model_name: str, LLM model name
-        max_iterations: int, maximum refinement iterations
-        solver: str, 'prover9' or 'z3'
+        config: dict, optional configuration dict (see run_logiclm_plus for keys)
         output_dir: str, directory to save results (optional)
         save_interval: int, save intermediate results every N examples
+        **kwargs: individual parameters (override config if both provided)
 
     Returns:
         dict with aggregated results and metrics
@@ -289,8 +304,8 @@ def run_batch(examples, model_name=MODEL_NAME, max_iterations=MAX_REFINEMENT_ITE
             query=query,
             model_name=model_name,
             ground_truth=ground_truth,
-            max_iterations=max_iterations,
-            solver=solver
+            config=config,
+            **kwargs
         )
 
         # Add example metadata
