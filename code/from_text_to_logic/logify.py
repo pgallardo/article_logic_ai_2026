@@ -212,11 +212,30 @@ def main():
         print(f"  Reasoning effort: {args.reasoning_effort}")
         print(f"  Max tokens: {args.max_tokens}")
 
+        # Generate output filename if not specified
+        if args.output is None:
+            if input_is_file:
+                # Get the input file path components
+                input_path = Path(args.input)
+                input_dir = input_path.parent
+                input_stem = input_path.stem  # filename without extension
+
+                # Create descriptive suffix with model and key parameters
+                model_name = args.model.replace('/', '_').replace('.', '_')
+                suffix = f"_logified_{model_name}_effort-{args.reasoning_effort}_tokens-{args.max_tokens}.JSON"
+                output_filename = input_stem + suffix
+                output_path = input_dir / output_filename
+            else:
+                # For raw text input, use default name
+                output_path = "logified.JSON"
+        else:
+            output_path = args.output
+
         # Save output
-        converter.save_output(logic_structure, args.output)
+        converter.save_output(logic_structure, str(output_path))
 
         print(f"\n✓ Conversion completed successfully!")
-        print(f"  Output saved to: {args.output}")
+        print(f"  Output saved to: {output_path}")
         return 0
 
     except FileNotFoundError as e:
