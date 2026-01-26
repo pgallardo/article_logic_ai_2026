@@ -114,10 +114,17 @@ RELATION TRIPLES:
 
             # Debug: print the raw response
             print(f"  Response received. Parsing...")
+            print(f"  DEBUG - Full response object:")
+            print(f"    Model: {response.model if hasattr(response, 'model') else 'N/A'}")
+            print(f"    Choices: {len(response.choices) if hasattr(response, 'choices') else 0}")
+            if hasattr(response, 'choices') and len(response.choices) > 0:
+                print(f"    Message role: {response.choices[0].message.role if hasattr(response.choices[0].message, 'role') else 'N/A'}")
+                print(f"    Content type: {type(response.choices[0].message.content)}")
 
             response_text = response.choices[0].message.content
             if response_text is None:
-                print(f"  WARNING: Response content is None. Full response: {response}")
+                print(f"  WARNING: Response content is None.")
+                print(f"  Full response: {response}")
                 raise ValueError("LLM returned empty response")
 
             response_text = response_text.strip()
