@@ -39,6 +39,7 @@ class LogicConverter:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.reasoning_effort = reasoning_effort
+        self.api_key = api_key  # Store for later reference
         self.system_prompt = self._load_system_prompt()
 
     def _load_system_prompt(self) -> str:
@@ -90,15 +91,31 @@ RELATION TRIPLES:
             # Build API call parameters based on model type
             if is_reasoning_model:
                 # Reasoning models use different parameters
-                api_params = {
-                    "model": self.model,
-                    "messages": [
-                        {"role": "developer", "content": self.system_prompt},  # Use "developer" role for GPT-5.2
-                        {"role": "user", "content": combined_input}
-                    ],
-                    "reasoning_effort": self.reasoning_effort,  # Set reasoning effort (top-level parameter)
-                    "max_completion_tokens": self.max_tokens  # Use max_completion_tokens for reasoning models
-                }
+                # OpenRouter uses nested 'reasoning' object, OpenAI uses top-level 'reasoning_effort'
+                if self.api_key.startswith('sk-or-v1-') or self.api_key.startswith('sk-or-'):
+                    # OpenRouter format
+                    api_params = {
+                        "model": self.model,
+                        "messages": [
+                            {"role": "user", "content": self.system_prompt + "\n\n" + combined_input}  # Combine system + user for OpenRouter
+                        ],
+                        "reasoning": {
+                            "effort": self.reasoning_effort,
+                            "enabled": True
+                        },
+                        "max_tokens": self.max_tokens
+                    }
+                else:
+                    # Direct OpenAI API format
+                    api_params = {
+                        "model": self.model,
+                        "messages": [
+                            {"role": "developer", "content": self.system_prompt},  # Use "developer" role for GPT-5.2
+                            {"role": "user", "content": combined_input}
+                        ],
+                        "reasoning_effort": self.reasoning_effort,  # Top-level parameter for OpenAI
+                        "max_completion_tokens": self.max_tokens
+                    }
                 print(f"  Using reasoning effort: {self.reasoning_effort}")
             else:
                 # Standard models (gpt-4o, gpt-4-turbo, etc.)
