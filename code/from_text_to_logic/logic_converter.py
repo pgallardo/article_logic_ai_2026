@@ -142,6 +142,12 @@ RELATION TRIPLES:
             if hasattr(response, 'choices') and len(response.choices) > 0:
                 print(f"    Message role: {response.choices[0].message.role if hasattr(response.choices[0].message, 'role') else 'N/A'}")
                 print(f"    Content type: {type(response.choices[0].message.content)}")
+                print(f"    Finish reason: {response.choices[0].finish_reason if hasattr(response.choices[0], 'finish_reason') else 'N/A'}")
+                # Check for refusal
+                if hasattr(response.choices[0].message, 'refusal') and response.choices[0].message.refusal:
+                    print(f"    REFUSAL: {response.choices[0].message.refusal}")
+            # Print full response for debugging
+            print(f"  DEBUG - Complete response dict: {response.model_dump() if hasattr(response, 'model_dump') else str(response)}")
 
             response_text = response.choices[0].message.content
             if response_text is None:
