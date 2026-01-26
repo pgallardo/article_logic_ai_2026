@@ -82,6 +82,13 @@ from formalizer import (
     parse_formalization_response,
     validate_formalization
 )
+from evaluator import (
+    evaluate_predictions,
+    compute_logiclm_metrics,
+    compute_backtracking_stats,
+    compute_efficiency_metrics,
+    generate_report
+)
 
 
 # ============================================================================
@@ -326,6 +333,137 @@ def test_solver_failure_handling():
 
 
 # ============================================================================
+# EVALUATOR TESTS
+# ============================================================================
+
+def test_accuracy_metrics():
+    """Standard classification metrics (Table 1)."""
+    print("Running test_accuracy_metrics...")
+
+    predictions = ['True', 'False', 'True', 'Unknown']
+    ground_truth = ['True', 'True', 'True', 'Unknown']
+
+    result = evaluate_predictions(predictions, ground_truth)
+
+    assert 'overall_accuracy' in result, "Should have overall_accuracy"
+    assert 0.0 <= result['overall_accuracy'] <= 1.0, "Accuracy should be between 0 and 1"
+    assert 'per_class' in result, "Should have per_class metrics"
+    assert 'confusion_matrix' in result, "Should have confusion_matrix"
+    print(f"  Overall accuracy: {result['overall_accuracy']:.2f}")
+    print("  ✓ test_accuracy_metrics passed")
+
+
+def test_execution_rate_Er():
+    """% formulations that execute."""
+    print("Running test_execution_rate_Er...")
+
+    results = [
+        {'execution_success': True, 'correct': True, 'formalization_success': True,
+         'num_refinement_iterations': 1, 'backtracking_history': [], 'num_backtracks': 0, 'early_stop_reason': None},
+        {'execution_success': True, 'correct': False, 'formalization_success': True,
+         'num_refinement_iterations': 1, 'backtracking_history': [], 'num_backtracks': 0, 'early_stop_reason': None},
+        {'execution_success': False, 'correct': None, 'formalization_success': False,
+         'num_refinement_iterations': 0, 'backtracking_history': [], 'num_backtracks': 0, 'early_stop_reason': None},
+        {'execution_success': True, 'correct': True, 'formalization_success': True,
+         'num_refinement_iterations': 1, 'backtracking_history': [], 'num_backtracks': 0, 'early_stop_reason': None}
+    ]
+
+    metrics = compute_logiclm_metrics(results)
+
+    assert 'execution_rate_Er' in metrics, "Should have execution_rate_Er"
+    assert metrics['execution_rate_Er'] == 0.75, f"Should be 0.75 (3/4), got {metrics['execution_rate_Er']}"
+    print(f"  Execution rate: {metrics['execution_rate_Er']:.2f}")
+    print("  ✓ test_execution_rate_Er passed")
+
+
+def test_execution_accuracy_Ea():
+    """% correct among executed (NOT among all)."""
+    print("Running test_execution_accuracy_Ea...")
+
+    results = [
+        {'execution_success': True, 'correct': True, 'formalization_success': True,
+         'num_refinement_iterations': 2, 'backtracking_history': ['IMPROVED', 'REVERT'],
+         'num_backtracks': 1, 'early_stop_reason': None},
+        {'execution_success': True, 'correct': False, 'formalization_success': True,
+         'num_refinement_iterations': 1, 'backtracking_history': ['IMPROVED'],
+         'num_backtracks': 0, 'early_stop_reason': None},
+        {'execution_success': False, 'correct': None, 'formalization_success': False,
+         'num_refinement_iterations': 0, 'backtracking_history': [],
+         'num_backtracks': 0, 'early_stop_reason': 'formalization_failed'},
+        {'execution_success': True, 'correct': True, 'formalization_success': True,
+         'num_refinement_iterations': 3, 'backtracking_history': ['IMPROVED', 'IMPROVED', 'REVERT'],
+         'num_backtracks': 1, 'early_stop_reason': None}
+    ]
+
+    metrics = compute_logiclm_metrics(results)
+
+    assert 'execution_accuracy_Ea' in metrics, "Should have execution_accuracy_Ea"
+    # 2 correct out of 3 executed (NOT 4 total)
+    expected_ea = 2.0 / 3.0
+    assert abs(metrics['execution_accuracy_Ea'] - expected_ea) < 0.01, \
+        f"Expected {expected_ea:.3f}, got {metrics['execution_accuracy_Ea']:.3f}"
+    print(f"  Execution accuracy: {metrics['execution_accuracy_Ea']:.3f}")
+    print("  ✓ test_execution_accuracy_Ea passed")
+
+
+def test_backtracking_stats():
+    """Figure 4 metrics (corrected per iteration)."""
+    print("Running test_backtracking_stats...")
+
+    results = [
+        {'initial_formulation': {'correct': False}, 'correct': True,
+         'num_refinement_iterations': 2, 'backtracking_history': ['IMPROVED', 'REVERT']},
+        {'initial_formulation': {'correct': True}, 'correct': False,
+         'num_refinement_iterations': 1, 'backtracking_history': ['IMPROVED']},
+        {'initial_formulation': {'correct': False}, 'correct': True,
+         'num_refinement_iterations': 3, 'backtracking_history': ['IMPROVED', 'IMPROVED', 'REVERT']}
+    ]
+
+    stats = compute_backtracking_stats(results)
+
+    assert 'num_formulations_corrected_per_iteration' in stats, "Should have corrected per iteration"
+    assert 'winning_cases' in stats, "Should have winning_cases"
+    assert 'losing_cases' in stats, "Should have losing_cases"
+    assert stats['winning_cases'] == 2, f"Expected 2 winning cases, got {stats['winning_cases']}"
+    assert stats['losing_cases'] == 1, f"Expected 1 losing case, got {stats['losing_cases']}"
+    print(f"  Winning cases: {stats['winning_cases']}, Losing cases: {stats['losing_cases']}")
+    print("  ✓ test_backtracking_stats passed")
+
+
+def test_efficiency_metrics():
+    """Time, LLM calls tracking."""
+    print("Running test_efficiency_metrics...")
+
+    results = [
+        {'total_time': 10.5, 'total_llm_calls': 5,
+         'time_breakdown': {'formalization': 2.0, 'refinement': 6.0, 'backtracking': 1.5, 'solving': 1.0}},
+        {'total_time': 15.2, 'total_llm_calls': 7,
+         'time_breakdown': {'formalization': 3.0, 'refinement': 8.0, 'backtracking': 2.2, 'solving': 2.0}},
+        {'total_time': 8.0, 'total_llm_calls': 3,
+         'time_breakdown': {'formalization': 1.5, 'refinement': 4.0, 'backtracking': 1.0, 'solving': 1.5}}
+    ]
+
+    metrics = compute_efficiency_metrics(results)
+
+    assert 'avg_time_per_query' in metrics, "Should have avg_time_per_query"
+    assert 'avg_llm_calls_per_query' in metrics, "Should have avg_llm_calls_per_query"
+    assert 'time_breakdown' in metrics, "Should have time_breakdown"
+    assert 'total_cost_estimate' in metrics, "Should have total_cost_estimate"
+
+    expected_avg_time = (10.5 + 15.2 + 8.0) / 3
+    assert abs(metrics['avg_time_per_query'] - expected_avg_time) < 0.1, \
+        f"Expected avg time {expected_avg_time:.2f}, got {metrics['avg_time_per_query']:.2f}"
+
+    expected_avg_calls = (5 + 7 + 3) / 3
+    assert abs(metrics['avg_llm_calls_per_query'] - expected_avg_calls) < 0.1, \
+        f"Expected avg calls {expected_avg_calls:.2f}, got {metrics['avg_llm_calls_per_query']:.2f}"
+
+    print(f"  Avg time per query: {metrics['avg_time_per_query']:.2f}s")
+    print(f"  Avg LLM calls per query: {metrics['avg_llm_calls_per_query']:.2f}")
+    print("  ✓ test_efficiency_metrics passed")
+
+
+# ============================================================================
 # MAIN TEST RUNNER
 # ============================================================================
 
@@ -356,6 +494,14 @@ def run_all_tests():
     print("\n--- INTEGRATION TESTS ---")
     test_formalization_failure_handling()
     test_solver_failure_handling()
+
+    # Evaluator tests
+    print("\n--- EVALUATOR TESTS ---")
+    test_accuracy_metrics()
+    test_execution_rate_Er()
+    test_execution_accuracy_Ea()
+    test_backtracking_stats()
+    test_efficiency_metrics()
 
     print("\n" + "="*70)
     print("ALL TESTS PASSED ✓")
