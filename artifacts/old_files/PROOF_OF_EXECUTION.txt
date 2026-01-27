@@ -1,0 +1,74 @@
+================================================================================
+PROOF OF EXECUTION - OpenIE Extractor
+Timestamp: 2026-01-25 16:35:38.357038
+================================================================================
+
+[TEST 1] Simple extraction without coref
+--------------------------------------------------------------------------------
+Initializing OpenIE Extractor with native Stanza...
+Initializing Stanza dependency parse pipeline...
+  ✓ Stanza depparse initialized
+Initializing CoreNLP client for OpenIE...
+  ✓ CoreNLP OpenIE client initialized
+
+Initialization complete:
+  - Native Stanza coref: False
+  - Stanza depparse fallback: True
+  - CoreNLP port: 9006
+Extracting relation triples with native Stanza...
+  ✓ Extracted 5 relation triples
+    - OpenIE: 5
+    - Stanza fallback: 0
+
+  Sample triples:
+    1. (attention ; is ; immediate) [openie]
+    2. (immediate attention ; is for ; patients) [openie]
+    3. (hospital ; requires ; immediate attention for patients) [openie]
+    4. (hospital ; requires ; immediate attention) [openie]
+    5. (hospital ; requires ; attention) [openie]
+
+Input: The hospital requires immediate attention for patients.
+Output: 5 triples
+  1. (attention) --[is]--> (immediate)
+  2. (immediate attention) --[is for]--> (patients)
+  3. (hospital) --[requires]--> (immediate attention for patients)
+  4. (hospital) --[requires]--> (immediate attention)
+  5. (hospital) --[requires]--> (attention)
+CoreNLP client closed.
+
+
+[TEST 2] Extraction WITH coref enabled
+--------------------------------------------------------------------------------
+Initializing OpenIE Extractor with native Stanza...
+Initializing native Stanza coreference pipeline...
+  ✓ Native Stanza coref initialized
+Initializing Stanza dependency parse pipeline...
+  ✓ Stanza depparse initialized
+Initializing CoreNLP client for OpenIE...
+  ✓ CoreNLP OpenIE client initialized
+
+Initialization complete:
+  - Native Stanza coref: True
+  - Stanza depparse fallback: True
+  - CoreNLP port: 9007
+Coref pipeline initialized: True
+Extracting relation triples with native Stanza...
+  ✓ Extracted 2 relation triples
+    - OpenIE: 2
+    - Stanza fallback: 0
+
+  Sample triples:
+    1. (Dr. Smith ; is ; cardiologist) [openie]
+    2. (She ; treats ; patients) [openie]
+
+Input: Dr. Smith is a cardiologist. She treats patients.
+Output: 2 triples
+  1. (Dr. Smith) --[is]--> (cardiologist)
+  2. (She) --[treats]--> (patients)
+CoreNLP client closed.
+
+================================================================================
+VERIFICATION COMPLETE
+Both tests executed successfully
+Coreference pipeline confirmed working
+================================================================================

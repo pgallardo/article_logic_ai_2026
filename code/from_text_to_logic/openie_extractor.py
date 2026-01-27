@@ -81,10 +81,11 @@ class OpenIEExtractor:
         if enable_coref:
             print("Initializing native Stanza coreference pipeline...")
             try:
+                # Allow downloading HuggingFace models needed by coref
+                # Use default download_method to enable transformer model downloads
                 self.coref_pipeline = stanza.Pipeline(
                     language,
                     processors='tokenize,coref',
-                    download_method=None,  # Don't auto-download
                     verbose=False
                 )
                 print("  ✓ Native Stanza coref initialized")
@@ -112,9 +113,9 @@ class OpenIEExtractor:
         print("Initializing CoreNLP client for OpenIE...")
         self.openie_annotators = ['tokenize', 'ssplit', 'pos', 'lemma', 'depparse', 'natlog', 'openie']
         self.openie_properties = {
-            'openie.triple.strict': 'false',
+            'openie.triple.strict': 'true',
             'openie.triple.all_nominals': 'true',
-            'openie.max_entailments_per_clause': '500',
+            'openie.max_entailments_per_clause': '3',
             'openie.affinity_probability_cap': '0.33',
         }
 
@@ -534,6 +535,51 @@ class OpenIEExtractor:
             lines.append(line)
 
         return "\n".join(lines)
+
+    def format_triples_json(self, triples: List[Dict[str, Any]], indent: int = 2) -> str:
+        """
+        Format OpenIE triples as JSON array format without field names to save tokens.
+
+        Args:
+            triples: List of relation triples
+            indent: JSON indentation (0 for compact, 2 for readable, -1 for prompt format)
+
+        Returns:
+            JSON string of triples as arrays: [subject, predicate, object, sentence_index]
+            Format optimized to minimize token usage by avoiding repeated field names.
+
+            When indent=-1, uses prompt-compatible format:
+            [ ["subject", "predicate", "object", 0],
+              ["subject2", "predicate2", "object2", 1]]
+        """
+        import json
+
+        if not triples:
+            return "[]"
+
+        # Convert to compact array format: [subject, predicate, object, sentence_index]
+        array_triples = []
+        for triple in triples:
+            array_triple = [
+                triple['subject'],
+                triple['predicate'],
+                triple['object'],
+                triple['sentence_index']
+            ]
+            array_triples.append(array_triple)
+
+        # Special prompt-compatible format: each triple on one line
+        if indent == -1:
+            lines = ["["]
+            for i, triple in enumerate(array_triples):
+                triple_str = json.dumps(triple, ensure_ascii=False)
+                if i < len(array_triples) - 1:
+                    lines.append(f"  {triple_str},")
+                else:
+                    lines.append(f"  {triple_str}]")
+            return "\n".join(lines)
+
+        return json.dumps(array_triples, indent=indent, ensure_ascii=False)
 
     def close(self):
         """Clean up Stanza pipelines and CoreNLP resources."""
