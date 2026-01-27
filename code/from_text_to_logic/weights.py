@@ -2,32 +2,31 @@
 """
 weights.py - Soft Constraint Verification via LLM Logprobs
 
-Verifies whether a document endorses a soft constraint as a general rule using:
-1. Document chunking
-2. SBERT retrieval of top-k relevant chunks
-3. LLM verification with logprob extraction
+Verifies whether a document endorses each soft constraint from a logified JSON file.
+Uses SBERT retrieval + LLM logprob extraction to compute probability scores.
 
 See weights_how_it_works.md for detailed algorithm explanation.
 
 Usage (CLI):
-    python weights.py document.pdf --constraint "The rule to verify" --api-key sk-...
+    python weights.py document.pdf logified.json --api-key sk-...
 
 Usage (Python):
-    from from_text_to_logic.weights import verify_constraint
+    from from_text_to_logic.weights import assign_weights
 
-    result = verify_constraint(
+    result = assign_weights(
         pathfile="document.pdf",
-        text_s="Employees must wear safety goggles",
+        json_path="logified.json",
         api_key="sk-..."
     )
-    print(f"P(YES) = {result['prob_yes']:.4f}")
+    # Outputs: logified_weighted.json
 """
 
 import sys
+import json
 import math
 import argparse
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 # Add code directory to Python path (for imports to work from anywhere)
 script_dir = Path(__file__).resolve().parent
@@ -57,10 +56,6 @@ def extract_text_from_document(file_path: str) -> str:
 
     Returns:
         Extracted text content
-
-    Raises:
-        ValueError: If file format is not supported
-        FileNotFoundError: If file does not exist
     """
     path = Path(file_path)
 
@@ -110,6 +105,7 @@ def extract_text_from_document(file_path: str) -> str:
 def retrieve_top_k_chunks(
     constraint: str,
     chunks: List[Dict],
+    chunk_embeddings: np.ndarray,
     sbert_model,
     k: int = 10
 ) -> List[Dict]:
@@ -119,13 +115,13 @@ def retrieve_top_k_chunks(
     Args:
         constraint: The soft constraint text (query)
         chunks: List of chunk dicts from chunker
+        chunk_embeddings: Pre-computed chunk embeddings
         sbert_model: Loaded SBERT model
         k: Number of chunks to retrieve
 
     Returns:
         List of top-k chunks sorted by similarity (highest first)
     """
-    chunk_embeddings = encode_chunks(chunks, sbert_model)
     query_embedding = encode_query(constraint, sbert_model)
     similarities = compute_cosine_similarity(query_embedding, chunk_embeddings)
 
@@ -154,7 +150,6 @@ def build_verification_prompt(chunks: List[Dict], constraint: str) -> str:
     Returns:
         Formatted prompt string
     """
-    # Concatenate chunk texts
     chunk_texts = "\n\n".join([chunk['text'] for chunk in chunks])
 
     prompt = f"""You are a verifier that will answer with exactly one token: "YES" or "NO". Do not produce any other text.
@@ -181,11 +176,9 @@ def extract_logprobs_for_yes_no(response) -> Dict[str, float]:
     Returns:
         Dict with logit_yes, logit_no, prob_yes, prob_no
     """
-    # Default to -inf if not found
     logit_yes = -100.0
     logit_no = -100.0
 
-    # Access the first token's logprobs
     if (hasattr(response.choices[0], 'logprobs') and
         response.choices[0].logprobs is not None and
         hasattr(response.choices[0].logprobs, 'content') and
@@ -213,7 +206,6 @@ def extract_logprobs_for_yes_no(response) -> Dict[str, float]:
                 elif token == "NO" and logit_no == -100.0:
                     logit_no = logprob
 
-    # Convert logits to probabilities
     prob_yes = math.exp(logit_yes) if logit_yes > -100.0 else 0.0
     prob_no = math.exp(logit_no) if logit_no > -100.0 else 0.0
 
@@ -225,9 +217,59 @@ def extract_logprobs_for_yes_no(response) -> Dict[str, float]:
     }
 
 
-def verify_constraint(
+def verify_single_constraint(
+    constraint_text: str,
+    chunks: List[Dict],
+    chunk_embeddings: np.ndarray,
+    sbert_model,
+    client: OpenAI,
+    model: str = "gpt-4o",
+    temperature: float = 0.0,
+    max_tokens: int = 5,
+    k: int = 10
+) -> Dict[str, float]:
+    """
+    Verify a single constraint against the document chunks.
+
+    Args:
+        constraint_text: The soft constraint translation (natural language)
+        chunks: All document chunks
+        chunk_embeddings: Pre-computed chunk embeddings
+        sbert_model: Loaded SBERT model
+        client: OpenAI client
+        model: OpenAI model
+        temperature: Sampling temperature
+        max_tokens: Max response tokens
+        k: Number of top chunks to retrieve
+
+    Returns:
+        Dict with logit_yes, logit_no, prob_yes, prob_no
+    """
+    # Retrieve top-k chunks for this constraint
+    retrieved_chunks = retrieve_top_k_chunks(
+        constraint_text, chunks, chunk_embeddings, sbert_model, k=k
+    )
+
+    # Build prompt
+    prompt = build_verification_prompt(retrieved_chunks, constraint_text)
+
+    # Call LLM with logprobs
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+        max_tokens=max_tokens,
+        logprobs=True,
+        top_logprobs=20
+    )
+
+    # Extract logprobs
+    return extract_logprobs_for_yes_no(response)
+
+
+def assign_weights(
     pathfile: str,
-    text_s: str,
+    json_path: str,
     api_key: str,
     model: str = "gpt-4o",
     temperature: float = 0.0,
@@ -240,11 +282,11 @@ def verify_constraint(
     verbose: bool = True
 ) -> Dict[str, Any]:
     """
-    Verify whether a document endorses a soft constraint.
+    Assign weights to all soft constraints in a logified JSON file.
 
     Args:
         pathfile: Path to document file (PDF, DOCX, TXT)
-        text_s: The soft constraint text (natural language)
+        json_path: Path to logified JSON file
         api_key: OpenAI API key
         model: OpenAI model (default: gpt-4o)
         temperature: Sampling temperature (default: 0.0)
@@ -257,16 +299,26 @@ def verify_constraint(
         verbose: Print progress messages (default: True)
 
     Returns:
-        Dict containing:
-            - logit_yes: Log probability of YES
-            - logit_no: Log probability of NO
-            - prob_yes: Probability of YES (exp of logit)
-            - prob_no: Probability of NO (exp of logit)
-            - constraint: The input constraint
-            - num_chunks: Total chunks in document
-            - chunks_used: Number of chunks sent to LLM
+        The logified structure with weights added to soft constraints
     """
-    # Step 1: Extract text from document
+    # Step 1: Load logified JSON
+    if verbose:
+        print(f"Loading logified JSON from: {json_path}")
+
+    with open(json_path, 'r', encoding='utf-8') as f:
+        logified = json.load(f)
+
+    soft_constraints = logified.get('soft_constraints', [])
+
+    if not soft_constraints:
+        if verbose:
+            print("No soft constraints found. Nothing to weight.")
+        return logified
+
+    if verbose:
+        print(f"  Found {len(soft_constraints)} soft constraints")
+
+    # Step 2: Extract text from document
     if verbose:
         print(f"Extracting text from: {pathfile}")
 
@@ -275,7 +327,7 @@ def verify_constraint(
     if verbose:
         print(f"  Extracted {len(document_text)} characters")
 
-    # Step 2: Chunk the document
+    # Step 3: Chunk the document
     if verbose:
         print(f"Chunking document (size={chunk_size}, overlap={chunk_overlap})...")
 
@@ -284,85 +336,95 @@ def verify_constraint(
     if verbose:
         print(f"  Created {len(chunks)} chunks")
 
-    # Step 3: Retrieve top-k chunks using SBERT
+    # Step 4: Load SBERT and pre-compute chunk embeddings (once for all constraints)
     if verbose:
         print(f"Loading SBERT model: {sbert_model_name}")
 
     sbert_model = load_sbert_model(sbert_model_name)
 
     if verbose:
-        print(f"Retrieving top-{k} relevant chunks...")
+        print("Pre-computing chunk embeddings...")
 
-    retrieved_chunks = retrieve_top_k_chunks(text_s, chunks, sbert_model, k=k)
-
-    if verbose:
-        print(f"  Retrieved {len(retrieved_chunks)} chunks")
-        print(f"  Top 3 similarities: {[f'{c[\"similarity\"]:.3f}' for c in retrieved_chunks[:3]]}")
-
-    # Step 4: Build verification prompt
-    prompt = build_verification_prompt(retrieved_chunks, text_s)
+    chunk_embeddings = encode_chunks(chunks, sbert_model)
 
     if verbose:
-        print(f"Built verification prompt ({len(prompt)} characters)")
+        print(f"  Computed embeddings for {len(chunks)} chunks")
 
-    # Step 5: Call LLM with logprobs
-    if verbose:
-        print(f"Calling LLM ({model}) for verification...")
-
-    # Initialize OpenAI client
+    # Step 5: Initialize OpenAI client
     client = OpenAI(api_key=api_key)
 
-    # Check if this is a reasoning model (logprobs may not be supported)
+    # Check if this is a reasoning model
     is_reasoning_model = any(model.startswith(prefix) for prefix in ["gpt-5", "o1", "o3"])
-
     if is_reasoning_model:
         print(f"  WARNING: Model {model} may not support logprobs. Consider using gpt-4o.")
 
-    # API call with logprobs
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=temperature,
-        max_tokens=max_tokens,
-        logprobs=True,
-        top_logprobs=20  # Get top 20 to ensure YES/NO are captured
-    )
+    # Step 6: Process each soft constraint
+    if verbose:
+        print(f"\nProcessing {len(soft_constraints)} soft constraints...")
 
-    # Step 6: Extract logprobs
-    result = extract_logprobs_for_yes_no(response)
+    for i, constraint in enumerate(soft_constraints):
+        constraint_id = constraint.get('id', f'S_{i+1}')
+        constraint_text = constraint.get('translation', '')
 
-    # Add metadata
-    result["constraint"] = text_s
-    result["num_chunks"] = len(chunks)
-    result["chunks_used"] = len(retrieved_chunks)
-    result["model"] = model
-    result["generated_token"] = response.choices[0].message.content.strip() if response.choices[0].message.content else ""
+        if not constraint_text:
+            if verbose:
+                print(f"  [{i+1}/{len(soft_constraints)}] {constraint_id}: SKIPPED (no translation)")
+            continue
+
+        if verbose:
+            print(f"  [{i+1}/{len(soft_constraints)}] {constraint_id}: {constraint_text[:60]}...")
+
+        # Verify this constraint
+        result = verify_single_constraint(
+            constraint_text=constraint_text,
+            chunks=chunks,
+            chunk_embeddings=chunk_embeddings,
+            sbert_model=sbert_model,
+            client=client,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            k=k
+        )
+
+        # Add weight field to constraint
+        constraint['weight'] = [
+            result['logit_yes'],
+            result['logit_no'],
+            result['prob_yes'],
+            result['prob_no']
+        ]
+
+        if verbose:
+            print(f"      → logit_yes={result['logit_yes']:.4f}, logit_no={result['logit_no']:.4f}, "
+                  f"P(YES)={result['prob_yes']:.4f}, P(NO)={result['prob_no']:.4f}")
+
+    # Step 7: Save output
+    json_path_obj = Path(json_path)
+    output_path = json_path_obj.parent / (json_path_obj.stem + "_weighted.json")
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(logified, f, indent=2, ensure_ascii=False)
 
     if verbose:
-        print(f"\nResults:")
-        print(f"  Generated token: {result['generated_token']}")
-        print(f"  logit(YES) = {result['logit_yes']:.4f}")
-        print(f"  logit(NO)  = {result['logit_no']:.4f}")
-        print(f"  P(YES) = {result['prob_yes']:.4f}")
-        print(f"  P(NO)  = {result['prob_no']:.4f}")
+        print(f"\n✓ Weights assigned! Output saved to: {output_path}")
 
-    return result
+    return logified
 
 
 def main():
-    """Command-line interface for constraint verification."""
+    """Command-line interface for weight assignment."""
     parser = argparse.ArgumentParser(
-        description="Verify if a document endorses a soft constraint using LLM logprobs",
-        epilog="Example: python weights.py document.pdf --constraint \"Safety rule\" --api-key sk-..."
+        description="Assign weights to soft constraints using LLM logprobs",
+        epilog="Example: python weights.py document.pdf logified.json --api-key sk-..."
     )
     parser.add_argument(
         "pathfile",
         help="Path to document file (PDF, DOCX, or TXT)"
     )
     parser.add_argument(
-        "--constraint", "-c",
-        required=True,
-        help="The soft constraint to verify (natural language)"
+        "json_path",
+        help="Path to logified JSON file"
     )
     parser.add_argument(
         "--api-key",
@@ -415,23 +477,22 @@ def main():
         action="store_true",
         help="Suppress progress messages"
     )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results as JSON"
-    )
 
     args = parser.parse_args()
 
-    # Validate file path
+    # Validate file paths
     if not Path(args.pathfile).exists():
-        print(f"Error: File not found: {args.pathfile}")
+        print(f"Error: Document not found: {args.pathfile}")
+        return 1
+
+    if not Path(args.json_path).exists():
+        print(f"Error: JSON file not found: {args.json_path}")
         return 1
 
     try:
-        result = verify_constraint(
+        assign_weights(
             pathfile=args.pathfile,
-            text_s=args.constraint,
+            json_path=args.json_path,
             api_key=args.api_key,
             model=args.model,
             temperature=args.temperature,
@@ -442,20 +503,6 @@ def main():
             chunk_overlap=args.chunk_overlap,
             verbose=not args.quiet
         )
-
-        if args.json:
-            import json
-            print(json.dumps(result, indent=2))
-        else:
-            if not args.quiet:
-                print("\n" + "=" * 50)
-            print(f"Constraint: {result['constraint']}")
-            print(f"Generated:  {result['generated_token']}")
-            print(f"logit(YES): {result['logit_yes']:.4f}")
-            print(f"logit(NO):  {result['logit_no']:.4f}")
-            print(f"P(YES):     {result['prob_yes']:.4f}")
-            print(f"P(NO):      {result['prob_no']:.4f}")
-
         return 0
 
     except Exception as e:
