@@ -1,45 +1,33 @@
 #!/usr/bin/env python3
 """
-weights.py - Soft Constraint Weight Assignment
+weights.py - Soft Constraint Verification via LLM Logprobs
 
-Implements Appendix A.1.1: SBERT Retrieval + NLI Reranking for assigning
-evidence-based weights to soft constraints.
+Verifies whether a document endorses a soft constraint as a general rule using:
+1. Document chunking
+2. SBERT retrieval of top-k relevant chunks
+3. LLM verification with logprob extraction
 
-Algorithm (Appendix A.1.1):
-1. Segment document into overlapping chunks (reuses baseline_rag.chunker)
-2. For each soft constraint:
-   a. Retrieve top-K relevant chunks using SBERT (reuses baseline_rag.retriever)
-   b. Score with NLI cross-encoder (entailment vs contradiction)
-   c. Aggregate evidence with log-sum-exp pooling (Appendix formula)
-   d. Transform to weight via sigmoid
-3. Add 'weight' field to each soft_constraint
-
-NOTE: For testing purposes, this also assigns weights to hard constraints.
-      In production, only soft constraints need weights.
-
-Input:
-    - logified_structure: dict from logify.py (constraints without weights)
-    - document_text: str (original document for evidence retrieval)
-
-Output:
-    - Same structure with 'weight' field added to each constraint
+See weights_how_it_works.md for detailed algorithm explanation.
 
 Usage (CLI):
-    python weights.py <document_path> <logified_json_path>
-
-    # Example:
-    python weights.py ../experiments/SINTEC.pdf ../experiments/SINTEC-output.json
-    # Output: ../experiments/SINTEC-output_weighted.json
+    python weights.py document.pdf --constraint "The rule to verify" --api-key sk-...
 
 Usage (Python):
-    from from_text_to_logic.weights import assign_weights
+    from from_text_to_logic.weights import verify_constraint
 
-    weighted_structure = assign_weights(logified_structure, document_text)
+    result = verify_constraint(
+        pathfile="document.pdf",
+        text_s="Employees must wear safety goggles",
+        api_key="sk-..."
+    )
+    print(f"P(YES) = {result['prob_yes']:.4f}")
 """
 
 import sys
-import os
+import math
+import argparse
 from pathlib import Path
+from typing import Dict, Any, List, Optional
 
 # Add code directory to Python path (for imports to work from anywhere)
 script_dir = Path(__file__).resolve().parent
@@ -47,10 +35,8 @@ code_dir = script_dir.parent
 if str(code_dir) not in sys.path:
     sys.path.insert(0, str(code_dir))
 
-import json
-import argparse
 import numpy as np
-from typing import Dict, List, Any
+from openai import OpenAI
 
 # Reuse existing RAG infrastructure
 from baseline_rag.chunker import chunk_document
@@ -61,548 +47,6 @@ from baseline_rag.retriever import (
     compute_cosine_similarity
 )
 
-# NLI cross-encoder (new dependency)
-try:
-    from sentence_transformers import CrossEncoder
-except ImportError:
-    raise ImportError(
-        "sentence-transformers is required for weight assignment. "
-        "Install with: pip install sentence-transformers"
-    )
-
-
-class WeightAssigner:
-    """
-    Assigns evidence-based weights to constraints using Appendix A.1.1.
-
-    Reuses existing infrastructure:
-    - baseline_rag.chunker: Document segmentation with overlap
-    - baseline_rag.retriever: SBERT encoding and cosine similarity
-
-    Adds new functionality:
-    - Multi-hypothesis retrieval (extends single-query retrieval)
-    - NLI cross-encoder scoring
-    - Log-sum-exp evidence pooling (EXACT appendix formula)
-    - Sigmoid weight transformation
-    """
-
-    def __init__(self,
-                 sbert_model_name: str = "all-MiniLM-L6-v2",
-                 nli_model_name: str = "cross-encoder/nli-deberta-v3-base",
-                 chunk_size: int = 512,
-                 chunk_overlap: int = 50,
-                 k_per_hypothesis: int = 20,
-                 k_total: int = 50,
-                 temperature: float = 2.0,
-                 num_hypotheses: int = 1):
-        """
-        Initialize weight assigner with Appendix A.1.1 defaults.
-
-        Args:
-            sbert_model_name: SBERT model for retrieval (default: all-MiniLM-L6-v2)
-            nli_model_name: NLI cross-encoder model (default: nli-deberta-v3-base)
-            chunk_size: Tokens per chunk (default: 512, ~150 words)
-            chunk_overlap: Overlapping tokens between chunks (default: 50)
-            k_per_hypothesis: Top-K chunks per hypothesis (default: 20, per appendix)
-            k_total: Max total chunks after union (default: 50, per appendix)
-            temperature: Log-sum-exp temperature τ (default: 2, per appendix)
-            num_hypotheses: Number of paraphrases r (default: 1, will use translation field)
-        """
-        # Load models
-        print("Loading SBERT model for retrieval...")
-        self.sbert_model = load_sbert_model(sbert_model_name)
-
-        print("Loading NLI cross-encoder for evidence scoring...")
-        self.nli_model = CrossEncoder(nli_model_name)
-
-        # Chunking parameters
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-
-        # Retrieval parameters (Appendix defaults)
-        self.K = k_per_hypothesis
-        self.K_total = k_total
-
-        # Pooling parameters (Appendix defaults)
-        self.tau = temperature
-
-        # Hypothesis generation
-        self.r = num_hypotheses
-
-        print("✓ Weight assigner initialized")
-
-    def assign_weights_to_structure(self,
-                                   logified_structure: Dict[str, Any],
-                                   document_text: str,
-                                   verbose: bool = True,
-                                   debug: bool = False) -> Dict[str, Any]:
-        """
-        Main entry point: Assign weights to all constraints.
-
-        NOTE: For testing purposes, assigns weights to BOTH hard and soft constraints.
-              In production, you may only need soft constraints.
-
-        Args:
-            logified_structure: Output from logify.py
-            document_text: Original document text
-            verbose: Print progress messages
-
-        Returns:
-            Same structure with 'weight' field added to all constraints
-        """
-        # Get constraints
-        hard_constraints = logified_structure.get('hard_constraints', [])
-        soft_constraints = logified_structure.get('soft_constraints', [])
-        total_constraints = len(hard_constraints) + len(soft_constraints)
-
-        if total_constraints == 0:
-            if verbose:
-                print("No constraints found. Returning structure unchanged.")
-            return logified_structure
-
-        if verbose:
-            print(f"\nAssigning weights to {total_constraints} constraints...")
-            print(f"  Hard constraints: {len(hard_constraints)}")
-            print(f"  Soft constraints: {len(soft_constraints)}")
-
-        # Step 1: Preprocess document (once for all constraints)
-        if verbose:
-            print("\n  Step 1: Segmenting document and computing embeddings...")
-
-        chunks, chunk_embeddings = self._preprocess_document(document_text)
-
-        if verbose:
-            print(f"    ✓ Created {len(chunks)} overlapping chunks")
-
-        # Step 2: Process hard constraints
-        if len(hard_constraints) > 0 and verbose:
-            print("\n  Step 2a: Processing hard constraints...")
-
-        for i, constraint in enumerate(hard_constraints, 1):
-            if verbose:
-                print(f"    [{i}/{len(hard_constraints)}] {constraint['id']}: {constraint['translation'][:60]}...")
-
-            weight = self._assign_weight_to_constraint(
-                constraint, chunks, chunk_embeddings, verbose_debug=debug
-            )
-
-            constraint['weight'] = float(weight)
-
-            if verbose:
-                print(f"      → weight = {weight:.3f}")
-
-        # Step 3: Process soft constraints
-        if len(soft_constraints) > 0 and verbose:
-            print("\n  Step 2b: Processing soft constraints...")
-
-        for i, constraint in enumerate(soft_constraints, 1):
-            if verbose:
-                print(f"    [{i}/{len(soft_constraints)}] {constraint['id']}: {constraint['translation'][:60]}...")
-
-            weight = self._assign_weight_to_constraint(
-                constraint, chunks, chunk_embeddings, verbose_debug=debug
-            )
-
-            constraint['weight'] = float(weight)
-
-            if verbose:
-                print(f"      → weight = {weight:.3f}")
-
-        if verbose:
-            print("\n  ✓ Weight assignment complete!\n")
-            if len(hard_constraints) > 0:
-                print("  Hard Constraint Weights:")
-                self._print_weight_summary(hard_constraints)
-            if len(soft_constraints) > 0:
-                print("\n  Soft Constraint Weights:")
-                self._print_weight_summary(soft_constraints)
-
-        return logified_structure
-
-    def _assign_weight_to_constraint(self,
-                                     constraint: Dict[str, Any],
-                                     chunks: List[Dict],
-                                     chunk_embeddings: np.ndarray,
-                                     verbose_debug: bool = False) -> float:
-        """
-        Assign weight to a single constraint following Appendix A.1.1.
-
-        Steps:
-        1. Generate hypotheses
-        2. Retrieve relevant chunks
-        3. NLI scoring
-        4. Log-sum-exp pooling (EXACT appendix formula)
-        5. Sigmoid transform
-        """
-        # Generate hypotheses (Step 2.1)
-        hypotheses = self._generate_hypotheses(constraint)
-
-        # Retrieve relevant chunks (Step 2.2-2.3)
-        retrieved_chunks = self._retrieve_for_constraint(
-            hypotheses, chunks, chunk_embeddings
-        )
-
-        # ===================== DEBUG OUTPUT =====================
-        if verbose_debug:
-            print(f"\n      [DEBUG] Constraint: {constraint['id']}")
-            print(f"      [DEBUG] Hypothesis: {hypotheses[0]}")
-            print(f"      [DEBUG] Retrieved {len(retrieved_chunks)} chunks for NLI scoring")
-        # ========================================================
-
-        # NLI scoring (Step 2.4-2.5)
-        evidence_scores = self._score_with_nli(retrieved_chunks, hypotheses, verbose_debug=verbose_debug)
-
-        # Log-sum-exp pooling (Step 2.6) - EXACT APPENDIX FORMULA
-        D = self._log_sum_exp_pooling(evidence_scores, verbose_debug=verbose_debug)
-
-        # Sigmoid transform (Step 2.7)
-        weight = self._sigmoid(D, verbose_debug=verbose_debug)
-
-        return weight
-
-    def _preprocess_document(self, text: str):
-        """
-        Appendix Step 1: Segment document and compute SBERT embeddings.
-
-        REUSES:
-        - baseline_rag.chunker.chunk_document()
-        - baseline_rag.retriever.encode_chunks()
-        """
-        # Segment document using existing chunker
-        chunks = chunk_document(
-            text,
-            chunk_size=self.chunk_size,
-            overlap=self.chunk_overlap
-        )
-
-        # Encode chunks using existing SBERT encoder
-        chunk_embeddings = encode_chunks(chunks, self.sbert_model)
-
-        return chunks, chunk_embeddings
-
-    def _generate_hypotheses(self, constraint: Dict[str, Any]) -> List[str]:
-        """
-        Appendix Step 2.1: Generate hypothesis set H(Q).
-
-        For now: r=1 (use translation field only)
-        Future: r=5 (add paraphrases)
-        """
-        # Use the translation field from the constraint
-        hypothesis = constraint['translation']
-
-        return [hypothesis]
-
-    def _retrieve_for_constraint(self,
-                                 hypotheses: List[str],
-                                 chunks: List[Dict],
-                                 chunk_embeddings: np.ndarray) -> List[Dict]:
-        """
-        Appendix Step 2.2-2.3: Retrieve top-K chunks per hypothesis,
-        then union and cap to K_total.
-
-        EXTENDS: baseline_rag.retriever to handle multiple hypotheses
-        REUSES: encode_query(), compute_cosine_similarity()
-        """
-        # Encode all hypotheses
-        hypothesis_embeddings = []
-        for h in hypotheses:
-            h_emb = encode_query(h, self.sbert_model)
-            hypothesis_embeddings.append(h_emb)
-        hypothesis_embeddings = np.array(hypothesis_embeddings)
-
-        # Retrieve using multi-hypothesis logic
-        retrieved_indices = self._retrieve_multi_hypothesis(
-            hypothesis_embeddings,
-            chunk_embeddings
-        )
-
-        # Return retrieved chunks
-        return [chunks[i] for i in retrieved_indices]
-
-    def _retrieve_multi_hypothesis(self,
-                                   hypothesis_embeddings: np.ndarray,
-                                   chunk_embeddings: np.ndarray) -> List[int]:
-        """
-        Appendix algorithm for multi-hypothesis retrieval:
-        1. For each hypothesis h_j, retrieve top-K chunks by cosine similarity
-        2. Form union E = ∪_j E_j
-        3. Deduplicate and cap to K_total
-
-        REUSES: compute_cosine_similarity() from baseline_rag.retriever
-        """
-        retrieved_indices = set()
-        max_similarity = {}
-
-        # For each hypothesis
-        for h_emb in hypothesis_embeddings:
-            # Compute similarities using existing function
-            similarities = compute_cosine_similarity(h_emb, chunk_embeddings)
-
-            # Get top-K indices for this hypothesis
-            # NO threshold - take all K (as appendix specifies)
-            top_k = np.argsort(similarities)[::-1][:self.K]
-
-            for idx in top_k:
-                retrieved_indices.add(idx)
-                score = similarities[idx]
-                # Track max similarity for this chunk across all hypotheses
-                max_similarity[idx] = max(max_similarity.get(idx, -1), score)
-
-        # Deduplicate and cap to K_total
-        result = list(retrieved_indices)
-
-        if len(result) > self.K_total:
-            # Sort by max similarity and keep top K_total
-            result.sort(key=lambda i: max_similarity[i], reverse=True)
-            result = result[:self.K_total]
-
-        return result
-
-    def _score_with_nli(self,
-                       chunks: List[Dict],
-                       hypotheses: List[str],
-                       verbose_debug: bool = False) -> np.ndarray:
-        """
-        Appendix Step 2.4-2.5: Score with NLI and compute evidence scores.
-
-        For each (premise, hypothesis) pair:
-        1. Get NLI logits: (z_ent, z_con, z_neu)
-        2. Compute evidence difference: d(p, h_j) = z_ent - z_con
-        3. For each premise, take max over hypotheses: d(p) = max_j d(p, h_j)
-
-        Returns: Array of evidence scores d(p) for each premise
-        """
-        premises = [chunk['text'] for chunk in chunks]
-
-        if len(premises) == 0:
-            return np.array([])
-
-        # Create all (premise, hypothesis) pairs
-        pairs = []
-        for p in premises:
-            for h in hypotheses:
-                pairs.append((p, h))
-
-        # NLI inference (batch processing)
-        nli_scores = self.nli_model.predict(pairs)  # Shape: [len(pairs), 3]
-        # DeBERTa NLI label order: [contradiction, neutral, entailment]
-        # nli_scores[:, 0] = contradiction
-        # nli_scores[:, 1] = neutral
-        # nli_scores[:, 2] = entailment
-
-        # ===================== DEBUG OUTPUT =====================
-        if verbose_debug:
-            print("\n      [DEBUG] NLI Scoring Details:")
-            print(f"      Hypothesis: {hypotheses[0][:80]}...")
-            print(f"      Number of premises (chunks): {len(premises)}")
-            print(f"      Raw NLI scores shape: {nli_scores.shape}")
-
-            # Convert logits to probabilities using softmax
-            def softmax(logits):
-                exp_logits = np.exp(logits - np.max(logits, axis=-1, keepdims=True))
-                return exp_logits / exp_logits.sum(axis=-1, keepdims=True)
-
-            nli_probs = softmax(nli_scores)  # Shape: [len(pairs), 3]
-
-            print("\n      NLI Probabilities for ALL chunks:")
-            print("      " + "-" * 80)
-            for idx in range(len(premises)):
-                logits = nli_scores[idx]
-                probs = nli_probs[idx]
-                d_val = logits[2] - logits[0]  # entailment - contradiction
-                print(f"        Chunk {idx}: '{premises[idx][:60]}...'")
-                print(f"            Logits:  con={logits[0]:.2f}, neu={logits[1]:.2f}, ent={logits[2]:.2f}")
-                print(f"            Probs:   con={probs[0]*100:.1f}%, neu={probs[1]*100:.1f}%, ent={probs[2]*100:.1f}%")
-                print(f"            d = ent - con = {d_val:.2f}")
-                # Interpretation
-                if probs[2] > 0.5:
-                    interp = "✓ GROUNDED (entailment)"
-                elif probs[0] > 0.5:
-                    interp = "✗ CONTRADICTED"
-                else:
-                    interp = "? NEUTRAL/UNCERTAIN"
-                print(f"            → {interp}")
-            print("      " + "-" * 80)
-
-            # Summary statistics
-            avg_ent = np.mean(nli_probs[:, 2]) * 100
-            avg_con = np.mean(nli_probs[:, 0]) * 100
-            avg_neu = np.mean(nli_probs[:, 1]) * 100
-            max_ent = np.max(nli_probs[:, 2]) * 100
-            print(f"\n      Summary: avg_ent={avg_ent:.1f}%, avg_con={avg_con:.1f}%, avg_neu={avg_neu:.1f}%, max_ent={max_ent:.1f}%")
-        # ========================================================
-
-        # Reshape to [num_premises, num_hypotheses, 3]
-        nli_scores = nli_scores.reshape(len(premises), len(hypotheses), 3)
-
-        # Compute evidence difference: d(p, h_j) = z_ent - z_con
-        z_con = nli_scores[:, :, 0]  # [premises, hypotheses] - contradiction
-        z_ent = nli_scores[:, :, 2]  # [premises, hypotheses] - entailment
-        d_matrix = z_ent - z_con     # [premises, hypotheses]
-
-        # ===================== DEBUG OUTPUT =====================
-        if verbose_debug:
-            print("\n      [DEBUG] Evidence Difference Matrix (d = z_ent - z_con):")
-            print(f"      d_matrix shape: {d_matrix.shape}")
-            print(f"      d_matrix stats: min={np.min(d_matrix):.4f}, max={np.max(d_matrix):.4f}, mean={np.mean(d_matrix):.4f}")
-            # Show distribution
-            d_flat = d_matrix.flatten()
-            print(f"      Distribution: <-0.5: {np.sum(d_flat < -0.5)}, [-0.5,0]: {np.sum((d_flat >= -0.5) & (d_flat < 0))}, "
-                  f"[0,0.5]: {np.sum((d_flat >= 0) & (d_flat < 0.5))}, >=0.5: {np.sum(d_flat >= 0.5)}")
-        # ========================================================
-
-        # Take max over hypotheses: d(p) = max_j d(p, h_j)
-        d_values = np.max(d_matrix, axis=1)  # [premises]
-
-        # ===================== DEBUG OUTPUT =====================
-        if verbose_debug:
-            print("\n      [DEBUG] After max over hypotheses:")
-            print(f"      d_values shape: {d_values.shape}")
-            print(f"      d_values stats: min={np.min(d_values):.4f}, max={np.max(d_values):.4f}, mean={np.mean(d_values):.4f}")
-        # ========================================================
-
-        # Numerical stability: clip extreme values
-        # (Prevents overflow in log-sum-exp)
-        d_values = np.clip(d_values, -10.0, 10.0)
-
-        return d_values
-
-    def _log_sum_exp_pooling(self, evidence_scores: np.ndarray, verbose_debug: bool = False) -> float:
-        """
-        Appendix Step 2.6: Log-sum-exp pooling.
-
-        EXACT FORMULA from Appendix A.1.1:
-        D(Q;T) = (1/τ) * log((1/K) * Σ_{i=1}^K exp(τ * d(p_i)))
-
-        Where:
-        - τ (tau): temperature parameter (default: 2)
-        - K: number of retrieved premises (evidence scores)
-        - d(p_i): evidence score for premise i
-
-        This is a smooth approximation of max:
-        - τ small → closer to average
-        - τ large → closer to max
-        - τ = 2 (default from appendix)
-
-        Implementation uses numerical stability trick:
-        Subtract max before exp, then add it back after log.
-        This is mathematically equivalent but prevents overflow.
-        """
-        if len(evidence_scores) == 0:
-            return 0.0
-
-        tau = self.tau
-        K = len(evidence_scores)
-
-        # Numerical stability: subtract max before exp
-        max_score = np.max(evidence_scores)
-
-        # exp(τ * d_i) with stability: exp(τ * (d_i - max_d))
-        exp_scores = np.exp(tau * (evidence_scores - max_score))
-
-        # EXACT APPENDIX FORMULA (with stability trick):
-        # D = (1/τ) * log((1/K) * Σ exp(τ * d_i))
-        # = (1/τ) * log((1/K) * Σ exp(τ * (d_i - max_d)) * exp(τ * max_d))
-        # = (1/τ) * log((1/K) * exp(τ * max_d) * Σ exp(τ * (d_i - max_d)))
-        # = (1/τ) * [log((1/K) * Σ exp(τ * (d_i - max_d))) + τ * max_d]
-        D = (1/tau) * (np.log((1/K) * np.sum(exp_scores)) + tau * max_score)
-
-        # ===================== DEBUG OUTPUT =====================
-        if verbose_debug:
-            print("\n      [DEBUG] Log-Sum-Exp Pooling:")
-            print(f"      τ (temperature) = {tau}")
-            print(f"      K (num evidence scores) = {K}")
-            print(f"      max(d) = {max_score:.4f}")
-            print(f"      Input d values: min={np.min(evidence_scores):.4f}, max={np.max(evidence_scores):.4f}, mean={np.mean(evidence_scores):.4f}")
-            print(f"      D (pooled score) = {D:.4f}")
-        # ========================================================
-
-        return D
-
-    def _sigmoid(self, x: float, verbose_debug: bool = False) -> float:
-        """
-        Appendix Step 2.7: Sigmoid transformation.
-
-        EXACT FORMULA from Appendix A.1.1:
-        w(Q) = σ(D(Q;T)) = 1 / (1 + exp(-D(Q;T)))
-
-        Maps evidence score to probability-like weight in (0, 1):
-        - D >> 0 (strong support) → w ≈ 1
-        - D << 0 (strong contradiction) → w ≈ 0
-        - D ≈ 0 (neutral) → w ≈ 0.5
-        """
-        result = 1.0 / (1.0 + np.exp(-x))
-
-        # ===================== DEBUG OUTPUT =====================
-        if verbose_debug:
-            print(f"\n      [DEBUG] Sigmoid Transform:")
-            print(f"      Input D = {x:.4f}")
-            print(f"      Output σ(D) = {result:.4f}")
-            print(f"      (Reference: σ(0)=0.5, σ(2)=0.88, σ(4)=0.98, σ(-2)=0.12)")
-        # ========================================================
-
-        return result
-
-    def _print_weight_summary(self, constraints: List[Dict]):
-        """Print summary statistics of assigned weights."""
-        weights = [c['weight'] for c in constraints]
-
-        print(f"    Mean: {np.mean(weights):.3f} ± {np.std(weights):.3f}")
-        print(f"    Range: [{np.min(weights):.3f}, {np.max(weights):.3f}]")
-        print(f"    Median: {np.median(weights):.3f}")
-
-
-# ============================================================================
-# Convenience function for easy integration
-# ============================================================================
-
-def assign_weights(logified_structure: Dict[str, Any],
-                  document_text: str,
-                  verbose: bool = True,
-                  debug: bool = False,
-                  **kwargs) -> Dict[str, Any]:
-    """
-    Convenience function: Assign weights to constraints.
-
-    This is the main function to call from other modules.
-
-    Args:
-        logified_structure: Output from logify.py
-        document_text: Original document text
-        verbose: Print progress messages
-        debug: Print detailed debug info for each constraint (NLI scores, etc.)
-        **kwargs: Additional parameters for WeightAssigner
-
-    Returns:
-        Same structure with 'weight' field added to all constraints
-
-    Example:
-        from from_text_to_logic.weights import assign_weights
-
-        # After logification
-        logified = converter.convert_text_to_logic(text)
-
-        # Assign weights
-        logified_with_weights = assign_weights(logified, text)
-
-        # Assign weights with debug output
-        logified_with_weights = assign_weights(logified, text, debug=True)
-
-        # Now both hard_constraints[i]['weight'] and
-        # soft_constraints[i]['weight'] exist!
-    """
-    assigner = WeightAssigner(**kwargs)
-    return assigner.assign_weights_to_structure(
-        logified_structure,
-        document_text,
-        verbose=verbose,
-        debug=debug
-    )
-
-
-# ============================================================================
-# Document text extraction (reused from logify.py)
-# ============================================================================
 
 def extract_text_from_document(file_path: str) -> str:
     """
@@ -613,6 +57,10 @@ def extract_text_from_document(file_path: str) -> str:
 
     Returns:
         Extracted text content
+
+    Raises:
+        ValueError: If file format is not supported
+        FileNotFoundError: If file does not exist
     """
     path = Path(file_path)
 
@@ -621,12 +69,10 @@ def extract_text_from_document(file_path: str) -> str:
 
     suffix = path.suffix.lower()
 
-    # Plain text file
     if suffix in ['.txt', '.text']:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
-    # PDF file
     elif suffix == '.pdf':
         try:
             import fitz  # PyMuPDF
@@ -635,7 +81,6 @@ def extract_text_from_document(file_path: str) -> str:
                 "PyMuPDF is required for PDF support. "
                 "Install with: pip install PyMuPDF"
             )
-
         doc = fitz.open(file_path)
         text_parts = []
         for page in doc:
@@ -643,7 +88,6 @@ def extract_text_from_document(file_path: str) -> str:
         doc.close()
         return "\n".join(text_parts)
 
-    # DOCX file
     elif suffix in ['.docx', '.doc']:
         try:
             from docx import Document
@@ -652,7 +96,6 @@ def extract_text_from_document(file_path: str) -> str:
                 "python-docx is required for DOCX support. "
                 "Install with: pip install python-docx"
             )
-
         doc = Document(file_path)
         text_parts = [para.text for para in doc.paragraphs]
         return "\n".join(text_parts)
@@ -664,23 +107,308 @@ def extract_text_from_document(file_path: str) -> str:
         )
 
 
-# ============================================================================
-# Command-line interface
-# ============================================================================
+def retrieve_top_k_chunks(
+    constraint: str,
+    chunks: List[Dict],
+    sbert_model,
+    k: int = 10
+) -> List[Dict]:
+    """
+    Retrieve top-k chunks most similar to the constraint using SBERT.
+
+    Args:
+        constraint: The soft constraint text (query)
+        chunks: List of chunk dicts from chunker
+        sbert_model: Loaded SBERT model
+        k: Number of chunks to retrieve
+
+    Returns:
+        List of top-k chunks sorted by similarity (highest first)
+    """
+    chunk_embeddings = encode_chunks(chunks, sbert_model)
+    query_embedding = encode_query(constraint, sbert_model)
+    similarities = compute_cosine_similarity(query_embedding, chunk_embeddings)
+
+    # Get top-k indices
+    k = min(k, len(chunks))
+    top_k_indices = np.argsort(similarities)[::-1][:k]
+
+    # Return chunks with similarity scores
+    retrieved = []
+    for idx in top_k_indices:
+        chunk = chunks[idx].copy()
+        chunk['similarity'] = float(similarities[idx])
+        retrieved.append(chunk)
+
+    return retrieved
+
+
+def build_verification_prompt(chunks: List[Dict], constraint: str) -> str:
+    """
+    Build the LLM prompt for YES/NO verification.
+
+    Args:
+        chunks: Retrieved chunks (top-k)
+        constraint: The soft constraint to verify
+
+    Returns:
+        Formatted prompt string
+    """
+    # Concatenate chunk texts
+    chunk_texts = "\n\n".join([chunk['text'] for chunk in chunks])
+
+    prompt = f"""You are a verifier that will answer with exactly one token: "YES" or "NO". Do not produce any other text.
+
+[TEXT]
+{chunk_texts}
+
+[CONSTRAINT]
+{constraint}
+
+[QUESTION]
+Does the text endorse this constraint as a general, necessary rule? Answer "YES" or "NO" with no other words."""
+
+    return prompt
+
+
+def extract_logprobs_for_yes_no(response) -> Dict[str, float]:
+    """
+    Extract logprobs for YES and NO tokens from API response.
+
+    Args:
+        response: OpenAI API response with logprobs
+
+    Returns:
+        Dict with logit_yes, logit_no, prob_yes, prob_no
+    """
+    # Default to -inf if not found
+    logit_yes = -100.0
+    logit_no = -100.0
+
+    # Access the first token's logprobs
+    if (hasattr(response.choices[0], 'logprobs') and
+        response.choices[0].logprobs is not None and
+        hasattr(response.choices[0].logprobs, 'content') and
+        response.choices[0].logprobs.content):
+
+        first_token_logprobs = response.choices[0].logprobs.content[0]
+
+        # Check the actual generated token first
+        actual_token = first_token_logprobs.token.strip().upper()
+        actual_logprob = first_token_logprobs.logprob
+
+        if actual_token == "YES":
+            logit_yes = actual_logprob
+        elif actual_token == "NO":
+            logit_no = actual_logprob
+
+        # Search through top_logprobs for YES and NO
+        if hasattr(first_token_logprobs, 'top_logprobs') and first_token_logprobs.top_logprobs:
+            for candidate in first_token_logprobs.top_logprobs:
+                token = candidate.token.strip().upper()
+                logprob = candidate.logprob
+
+                if token == "YES" and logit_yes == -100.0:
+                    logit_yes = logprob
+                elif token == "NO" and logit_no == -100.0:
+                    logit_no = logprob
+
+    # Convert logits to probabilities
+    prob_yes = math.exp(logit_yes) if logit_yes > -100.0 else 0.0
+    prob_no = math.exp(logit_no) if logit_no > -100.0 else 0.0
+
+    return {
+        "logit_yes": logit_yes,
+        "logit_no": logit_no,
+        "prob_yes": prob_yes,
+        "prob_no": prob_no
+    }
+
+
+def verify_constraint(
+    pathfile: str,
+    text_s: str,
+    api_key: str,
+    model: str = "gpt-4o",
+    temperature: float = 0.0,
+    max_tokens: int = 5,
+    reasoning_effort: str = "low",
+    k: int = 10,
+    chunk_size: int = 512,
+    chunk_overlap: int = 50,
+    sbert_model_name: str = "all-MiniLM-L6-v2",
+    verbose: bool = True
+) -> Dict[str, Any]:
+    """
+    Verify whether a document endorses a soft constraint.
+
+    Args:
+        pathfile: Path to document file (PDF, DOCX, TXT)
+        text_s: The soft constraint text (natural language)
+        api_key: OpenAI API key
+        model: OpenAI model (default: gpt-4o)
+        temperature: Sampling temperature (default: 0.0)
+        max_tokens: Max tokens in response (default: 5)
+        reasoning_effort: For reasoning models (default: low)
+        k: Number of top chunks to retrieve (default: 10)
+        chunk_size: Tokens per chunk (default: 512)
+        chunk_overlap: Overlapping tokens between chunks (default: 50)
+        sbert_model_name: SBERT model for retrieval (default: all-MiniLM-L6-v2)
+        verbose: Print progress messages (default: True)
+
+    Returns:
+        Dict containing:
+            - logit_yes: Log probability of YES
+            - logit_no: Log probability of NO
+            - prob_yes: Probability of YES (exp of logit)
+            - prob_no: Probability of NO (exp of logit)
+            - constraint: The input constraint
+            - num_chunks: Total chunks in document
+            - chunks_used: Number of chunks sent to LLM
+    """
+    # Step 1: Extract text from document
+    if verbose:
+        print(f"Extracting text from: {pathfile}")
+
+    document_text = extract_text_from_document(pathfile)
+
+    if verbose:
+        print(f"  Extracted {len(document_text)} characters")
+
+    # Step 2: Chunk the document
+    if verbose:
+        print(f"Chunking document (size={chunk_size}, overlap={chunk_overlap})...")
+
+    chunks = chunk_document(document_text, chunk_size=chunk_size, overlap=chunk_overlap)
+
+    if verbose:
+        print(f"  Created {len(chunks)} chunks")
+
+    # Step 3: Retrieve top-k chunks using SBERT
+    if verbose:
+        print(f"Loading SBERT model: {sbert_model_name}")
+
+    sbert_model = load_sbert_model(sbert_model_name)
+
+    if verbose:
+        print(f"Retrieving top-{k} relevant chunks...")
+
+    retrieved_chunks = retrieve_top_k_chunks(text_s, chunks, sbert_model, k=k)
+
+    if verbose:
+        print(f"  Retrieved {len(retrieved_chunks)} chunks")
+        print(f"  Top 3 similarities: {[f'{c[\"similarity\"]:.3f}' for c in retrieved_chunks[:3]]}")
+
+    # Step 4: Build verification prompt
+    prompt = build_verification_prompt(retrieved_chunks, text_s)
+
+    if verbose:
+        print(f"Built verification prompt ({len(prompt)} characters)")
+
+    # Step 5: Call LLM with logprobs
+    if verbose:
+        print(f"Calling LLM ({model}) for verification...")
+
+    # Initialize OpenAI client
+    client = OpenAI(api_key=api_key)
+
+    # Check if this is a reasoning model (logprobs may not be supported)
+    is_reasoning_model = any(model.startswith(prefix) for prefix in ["gpt-5", "o1", "o3"])
+
+    if is_reasoning_model:
+        print(f"  WARNING: Model {model} may not support logprobs. Consider using gpt-4o.")
+
+    # API call with logprobs
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+        max_tokens=max_tokens,
+        logprobs=True,
+        top_logprobs=20  # Get top 20 to ensure YES/NO are captured
+    )
+
+    # Step 6: Extract logprobs
+    result = extract_logprobs_for_yes_no(response)
+
+    # Add metadata
+    result["constraint"] = text_s
+    result["num_chunks"] = len(chunks)
+    result["chunks_used"] = len(retrieved_chunks)
+    result["model"] = model
+    result["generated_token"] = response.choices[0].message.content.strip() if response.choices[0].message.content else ""
+
+    if verbose:
+        print(f"\nResults:")
+        print(f"  Generated token: {result['generated_token']}")
+        print(f"  logit(YES) = {result['logit_yes']:.4f}")
+        print(f"  logit(NO)  = {result['logit_no']:.4f}")
+        print(f"  P(YES) = {result['prob_yes']:.4f}")
+        print(f"  P(NO)  = {result['prob_no']:.4f}")
+
+    return result
+
 
 def main():
-    """Command-line interface for weight assignment."""
+    """Command-line interface for constraint verification."""
     parser = argparse.ArgumentParser(
-        description="Assign evidence-based weights to constraints (Appendix A.1.1)",
-        epilog="Example: python weights.py document.pdf logified.json"
+        description="Verify if a document endorses a soft constraint using LLM logprobs",
+        epilog="Example: python weights.py document.pdf --constraint \"Safety rule\" --api-key sk-..."
     )
     parser.add_argument(
-        "document",
+        "pathfile",
         help="Path to document file (PDF, DOCX, or TXT)"
     )
     parser.add_argument(
-        "logified",
-        help="Path to logified JSON file (from logify.py)"
+        "--constraint", "-c",
+        required=True,
+        help="The soft constraint to verify (natural language)"
+    )
+    parser.add_argument(
+        "--api-key",
+        required=True,
+        help="OpenAI API key"
+    )
+    parser.add_argument(
+        "--model",
+        default="gpt-4o",
+        help="OpenAI model (default: gpt-4o)"
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="Sampling temperature (default: 0.0)"
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=5,
+        help="Maximum tokens in response (default: 5)"
+    )
+    parser.add_argument(
+        "--reasoning-effort",
+        default="low",
+        choices=["none", "low", "medium", "high"],
+        help="Reasoning effort for reasoning models (default: low)"
+    )
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=10,
+        help="Number of top chunks to retrieve (default: 10)"
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=512,
+        help="Tokens per chunk (default: 512)"
+    )
+    parser.add_argument(
+        "--chunk-overlap",
+        type=int,
+        default=50,
+        help="Overlapping tokens between chunks (default: 50)"
     )
     parser.add_argument(
         "--quiet",
@@ -688,53 +416,54 @@ def main():
         help="Suppress progress messages"
     )
     parser.add_argument(
-        "--debug",
+        "--json",
         action="store_true",
-        help="Print detailed debug info (NLI scores, intermediate values)"
+        help="Output results as JSON"
     )
 
     args = parser.parse_args()
 
-    # Validate paths
-    doc_path = Path(args.document)
-    json_path = Path(args.logified)
-
-    if not doc_path.exists():
-        print(f"Error: Document not found: {args.document}")
+    # Validate file path
+    if not Path(args.pathfile).exists():
+        print(f"Error: File not found: {args.pathfile}")
         return 1
 
-    if not json_path.exists():
-        print(f"Error: JSON file not found: {args.logified}")
+    try:
+        result = verify_constraint(
+            pathfile=args.pathfile,
+            text_s=args.constraint,
+            api_key=args.api_key,
+            model=args.model,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            reasoning_effort=args.reasoning_effort,
+            k=args.k,
+            chunk_size=args.chunk_size,
+            chunk_overlap=args.chunk_overlap,
+            verbose=not args.quiet
+        )
+
+        if args.json:
+            import json
+            print(json.dumps(result, indent=2))
+        else:
+            if not args.quiet:
+                print("\n" + "=" * 50)
+            print(f"Constraint: {result['constraint']}")
+            print(f"Generated:  {result['generated_token']}")
+            print(f"logit(YES): {result['logit_yes']:.4f}")
+            print(f"logit(NO):  {result['logit_no']:.4f}")
+            print(f"P(YES):     {result['prob_yes']:.4f}")
+            print(f"P(NO):      {result['prob_no']:.4f}")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
-
-    # Extract text from document
-    print(f"Reading document: {args.document}")
-    text = extract_text_from_document(args.document)
-    print(f"  ✓ Extracted {len(text)} characters")
-
-    # Load logified structure
-    print(f"Loading logified structure from {args.logified}...")
-    with open(args.logified, 'r') as f:
-        logified = json.load(f)
-
-    # Assign weights
-    logified_with_weights = assign_weights(
-        logified,
-        text,
-        verbose=not args.quiet,
-        debug=args.debug
-    )
-
-    # Generate output path: same folder as JSON, with _weighted.json suffix
-    output_path = json_path.parent / (json_path.stem + "_weighted.json")
-
-    with open(output_path, 'w') as f:
-        json.dump(logified_with_weights, f, indent=2)
-
-    print(f"\n✓ Weights assigned! Output saved to: {output_path}")
-    return 0
 
 
 if __name__ == "__main__":
-    import sys
     sys.exit(main())
