@@ -663,6 +663,11 @@ def main():
         action="store_true",
         help="Suppress progress messages"
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print detailed debug info (NLI scores, intermediate values)"
+    )
 
     args = parser.parse_args()
 
@@ -692,7 +697,8 @@ def main():
     logified_with_weights = assign_weights(
         logified,
         text,
-        verbose=not args.quiet
+        verbose=not args.quiet,
+        debug=args.debug
     )
 
     # Generate output path: same folder as JSON, with _weighted.json suffix
