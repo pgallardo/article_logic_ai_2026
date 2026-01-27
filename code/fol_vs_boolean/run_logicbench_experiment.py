@@ -112,46 +112,103 @@ def extract_fol(text, query):
 # DATASET LOADING
 # ============================================================================
 
-def load_logicbench(subset='PL', split='test', max_examples=None):
+def load_logicbench_from_github(logic_type='propositional_logic', reasoning_patterns=None, max_examples=None):
     """
-    Load LogicBench dataset from HuggingFace.
+    Load LogicBench dataset directly from GitHub repository.
 
     Args:
-        subset: str, 'PL' (propositional logic) or 'FOL' (first-order logic)
-        split: str, 'train', 'validation', or 'test'
-        max_examples: int, optional limit on number of examples to load
+        logic_type: str, 'propositional_logic', 'first_order_logic', or 'nm_logic'
+        reasoning_patterns: list of str, specific patterns to load (e.g., ['modus_tollens', 'disjunctive_syllogism'])
+                           If None, loads all available patterns
+        max_examples: int, optional limit on number of examples to load per pattern
 
     Returns:
         List[dict], each with 'id', 'text', 'query', 'ground_truth'
     """
-    try:
-        from datasets import load_dataset
-    except ImportError:
-        raise ImportError(
-            "HuggingFace datasets library required.\n"
-            "Install with: pip install datasets"
-        )
+    import urllib.request
 
-    print(f"Loading LogicBench subset={subset}, split={split}...")
+    print(f"Loading LogicBench from GitHub (logic_type={logic_type})...")
 
-    # Load from HuggingFace
-    dataset = load_dataset('logicbench/LogicBench', subset, split=split)
+    # Default reasoning patterns for each logic type
+    default_patterns = {
+        'propositional_logic': [
+            'modus_tollens', 'disjunctive_syllogism', 'hypothetical_syllogism',
+            'constructive_dilemma', 'destructive_dilemma', 'bidirectional_dilemma',
+            'commutation', 'material_implication'
+        ],
+        'first_order_logic': [
+            'universal_instantiation', 'existential_generalization',
+            'existential_instantiation', 'universal_generalization'
+        ]
+    }
 
-    # Convert to standardized format
+    if reasoning_patterns is None:
+        reasoning_patterns = default_patterns.get(logic_type, ['modus_tollens'])
+
+    base_url = "https://raw.githubusercontent.com/Mihir3009/LogicBench/main/data/LogicBench(Eval)/BQA"
+
     examples = []
-    for i, item in enumerate(dataset):
-        if max_examples and i >= max_examples:
-            break
+    for pattern in reasoning_patterns:
+        print(f"  Loading pattern: {pattern}")
 
-        example = {
-            'id': f"{subset}_{i}",
-            'text': item.get('context', item.get('premises', '')),
-            'query': item.get('question', item.get('conclusion', '')),
-            'ground_truth': item.get('answer', item.get('label', None))
-        }
-        examples.append(example)
+        # Try loading numbered JSON files (1.json, 2.json, etc.)
+        file_idx = 1
+        pattern_examples = 0
 
-    print(f"Loaded {len(examples)} examples from LogicBench")
+        while True:
+            if max_examples and pattern_examples >= max_examples:
+                break
+
+            url = f"{base_url}/{logic_type}/{pattern}/{file_idx}.json"
+
+            try:
+                with urllib.request.urlopen(url) as response:
+                    data = json.loads(response.read().decode())
+
+                    # Extract samples from LogicBench format
+                    for sample in data.get('samples', []):
+                        if max_examples and pattern_examples >= max_examples:
+                            break
+
+                        sample_id = sample.get('id', f"{pattern}_{file_idx}_{len(examples)}")
+                        context = sample.get('context', '')
+
+                        # LogicBench has qa_pairs (question-answer pairs)
+                        qa_pairs = sample.get('qa_pairs', [])
+                        if qa_pairs:
+                            # Use first QA pair
+                            qa = qa_pairs[0]
+                            query = qa.get('question', '')
+                            ground_truth = qa.get('answer', None)
+                        else:
+                            query = ''
+                            ground_truth = None
+
+                        examples.append({
+                            'id': sample_id,
+                            'text': context,
+                            'query': query,
+                            'ground_truth': ground_truth,
+                            'pattern': pattern
+                        })
+                        pattern_examples += 1
+
+                file_idx += 1
+
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    # No more files for this pattern
+                    break
+                else:
+                    print(f"    Error loading {url}: {e}")
+                    break
+            except Exception as e:
+                print(f"    Error processing {url}: {e}")
+                break
+
+        print(f"    Loaded {pattern_examples} examples from {pattern}")
+
+    print(f"Total loaded: {len(examples)} examples from LogicBench")
     return examples
 
 
@@ -298,23 +355,28 @@ def main():
     Main execution function.
     """
     # Configuration
-    SUBSET = 'PL'  # Use 'PL' subset which has propositional logic examples
-    SPLIT = 'test'
-    MAX_EXAMPLES = 50  # Limit to 50 examples for quick experiment
+    LOGIC_TYPE = 'propositional_logic'  # or 'first_order_logic'
+    PATTERNS = ['modus_tollens', 'disjunctive_syllogism']  # Specific patterns to test
+    MAX_EXAMPLES_PER_PATTERN = 10  # Limit examples per pattern
     OUTPUT_DIR = 'data/logicbench_results'
 
     print("="*60)
     print("LogicBench FOL vs Propositional Extraction Experiment")
     print("="*60)
 
-    # Step 1: Load dataset
-    print("\n[Step 1] Loading LogicBench dataset...")
+    # Step 1: Load dataset from GitHub
+    print("\n[Step 1] Loading LogicBench dataset from GitHub...")
     try:
-        examples = load_logicbench(subset=SUBSET, split=SPLIT, max_examples=MAX_EXAMPLES)
+        examples = load_logicbench_from_github(
+            logic_type=LOGIC_TYPE,
+            reasoning_patterns=PATTERNS,
+            max_examples=MAX_EXAMPLES_PER_PATTERN
+        )
     except Exception as e:
         print(f"ERROR loading dataset: {e}")
-        print("\nMake sure you have installed the datasets library:")
-        print("  pip install datasets")
+        print("\nMake sure you have internet connection to access GitHub.")
+        import traceback
+        traceback.print_exc()
         return
 
     if not examples:

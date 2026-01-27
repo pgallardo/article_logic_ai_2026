@@ -33,23 +33,21 @@ fol_vs_boolean/
 Run the single-file experiment with LogicBench dataset:
 
 ```bash
-# Install dependencies
-pip install datasets
-
 # Set your OpenAI API key (required for propositional extraction)
 export OPENAI_API_KEY='your-key-here'
 
-# Run the experiment
+# Run the experiment (no additional dependencies needed - loads from GitHub)
 python run_logicbench_experiment.py
 ```
 
 This will:
-- Load LogicBench dataset from HuggingFace (50 examples by default)
+- Load LogicBench dataset directly from GitHub (no HuggingFace account needed)
+- Uses propositional logic examples (modus_tollens, disjunctive_syllogism patterns)
 - Run both propositional and FOL extraction on same examples
 - Analyze and compare error rates
 - Save results to `data/logicbench_results/`
 
-**Advantages**: No manual data preparation, uses standardized benchmark, all-in-one script.
+**Advantages**: No manual data preparation, no external accounts needed, uses standardized benchmark, all-in-one script.
 
 ### Alternative: Custom Data Pipeline
 
