@@ -37,10 +37,18 @@ Usage (Python):
     weighted_structure = assign_weights(logified_structure, document_text)
 """
 
-import json
-import argparse
+import sys
+import os
 from pathlib import Path
 
+# Add code directory to Python path (for imports to work from anywhere)
+script_dir = Path(__file__).resolve().parent
+code_dir = script_dir.parent
+if str(code_dir) not in sys.path:
+    sys.path.insert(0, str(code_dir))
+
+import json
+import argparse
 import numpy as np
 from typing import Dict, List, Any
 
