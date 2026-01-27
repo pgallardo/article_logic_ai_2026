@@ -222,7 +222,8 @@ class WeightAssigner:
     def _assign_weight_to_constraint(self,
                                      constraint: Dict[str, Any],
                                      chunks: List[Dict],
-                                     chunk_embeddings: np.ndarray) -> float:
+                                     chunk_embeddings: np.ndarray,
+                                     verbose_debug: bool = False) -> float:
         """
         Assign weight to a single constraint following Appendix A.1.1.
 
@@ -241,14 +242,21 @@ class WeightAssigner:
             hypotheses, chunks, chunk_embeddings
         )
 
+        # ===================== DEBUG OUTPUT =====================
+        if verbose_debug:
+            print(f"\n      [DEBUG] Constraint: {constraint['id']}")
+            print(f"      [DEBUG] Hypothesis: {hypotheses[0]}")
+            print(f"      [DEBUG] Retrieved {len(retrieved_chunks)} chunks for NLI scoring")
+        # ========================================================
+
         # NLI scoring (Step 2.4-2.5)
-        evidence_scores = self._score_with_nli(retrieved_chunks, hypotheses)
+        evidence_scores = self._score_with_nli(retrieved_chunks, hypotheses, verbose_debug=verbose_debug)
 
         # Log-sum-exp pooling (Step 2.6) - EXACT APPENDIX FORMULA
-        D = self._log_sum_exp_pooling(evidence_scores)
+        D = self._log_sum_exp_pooling(evidence_scores, verbose_debug=verbose_debug)
 
         # Sigmoid transform (Step 2.7)
-        weight = self._sigmoid(D)
+        weight = self._sigmoid(D, verbose_debug=verbose_debug)
 
         return weight
 
