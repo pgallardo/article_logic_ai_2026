@@ -423,8 +423,9 @@ def assign_weights(
             print(f"      → logit_yes={result_original['logit_yes']:.4f}, logit_no={result_original['logit_no']:.4f}, "
                   f"P(YES)={result_original['prob_yes']:.4f}, P(NO)={result_original['prob_no']:.4f}")
 
-        # Verify negated constraint
-        negated_constraint_text = f"It is false that {constraint_text}"
+        # Verify negated constraint (lowercase first letter for grammatical correctness)
+        constraint_text_lower = constraint_text[0].lower() + constraint_text[1:] if constraint_text else constraint_text
+        negated_constraint_text = f"It is not the case that {constraint_text_lower}"
         if verbose:
             print(f"      Verifying negation: {negated_constraint_text[:60]}...")
         result_negated = verify_single_constraint(
