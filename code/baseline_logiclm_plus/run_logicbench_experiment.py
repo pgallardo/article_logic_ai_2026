@@ -89,12 +89,18 @@ def load_logicbench_from_local(logic_type, task_type='BQA'):
 
     examples = []
 
-    # Iterate through all JSON files in the directory
-    for filename in os.listdir(data_dir):
-        if not filename.endswith('.json'):
+    # Iterate through subdirectories (each is an inference rule)
+    for rule_name in os.listdir(data_dir):
+        rule_dir = os.path.join(data_dir, rule_name)
+
+        if not os.path.isdir(rule_dir):
             continue
 
-        filepath = os.path.join(data_dir, filename)
+        # Look for data_instances.json file
+        filepath = os.path.join(rule_dir, 'data_instances.json')
+
+        if not os.path.exists(filepath):
+            continue
 
         with open(filepath, 'r') as f:
             data = json.load(f)
@@ -116,7 +122,7 @@ def load_logicbench_from_local(logic_type, task_type='BQA'):
                     'context': context,
                     'question': question,
                     'answer': answer,
-                    'id': f"{filename}_{sample_id}",
+                    'id': f"{rule_name}_{sample_id}",
                     'rule_type': rule_type,
                     'axiom': axiom
                 })
