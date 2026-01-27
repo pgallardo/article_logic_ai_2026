@@ -1,0 +1,49 @@
+```json
+{
+  "primitive_props": [
+    {
+      "id": "P_1",
+      "translation": "Dani attended the lecture.",
+      "evidence": "“either attend the lecture or study for her upcoming exam.” / “it was clear that she did not attend the lecture.”",
+      "explanation": "This is a single, concrete event claim (attended vs. not attended) with no internal logical structure."
+    },
+    {
+      "id": "P_2",
+      "translation": "Dani studied for her upcoming exam.",
+      "evidence": "“either attend the lecture or study for her upcoming exam.”",
+      "explanation": "This is a single, concrete event claim (studied vs. not studied) with no internal logical structure."
+    }
+  ],
+  "hard_constraints": [
+    {
+      "id": "H_1",
+      "formula": "(P_1 ∨ P_2)",
+      "translation": "Dani would do one of the two: attend the lecture or study for the upcoming exam.",
+      "evidence": "“all we knew was that she would do one of the two.”",
+      "reasoning": "The text explicitly commits that at least one of the two actions will occur."
+    },
+    {
+      "id": "H_2",
+      "formula": "¬P_1",
+      "translation": "Dani did not attend the lecture.",
+      "evidence": "“it was clear that she did not attend the lecture.”",
+      "reasoning": "This is stated as a definite fact (“it was clear”)."
+    },
+    {
+      "id": "H_3",
+      "formula": "((P_1 ∨ P_2) ∧ ¬P_1) ⟹ P_2",
+      "translation": "Given she would do one of the two and she did not attend the lecture, she studied for her upcoming exam.",
+      "evidence": "Combines: “she would do one of the two” + “she did not attend the lecture.”",
+      "reasoning": "Since the only allowed options given are {attend, study} and attending is ruled out while at least one must happen, studying follows."
+    },
+    {
+      "id": "H_4",
+      "formula": "¬(P_1 ∧ P_2)",
+      "translation": "Dani did not both attend the lecture and study for her upcoming exam (the options are presented as a choice between alternatives).",
+      "evidence": "“Dani had a choice: either attend the lecture or study for her upcoming exam.”",
+      "reasoning": "The phrase “had a choice: either A or B” is most naturally read as presenting mutually exclusive alternatives in this context."
+    }
+  ],
+  "soft_constraints": []
+}
+```
