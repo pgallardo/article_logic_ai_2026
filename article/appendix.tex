@@ -108,19 +108,20 @@ FOLIO (FOL) & 85.8 & 91.2 \\
 The system supports two primary modes:
 
 \paragraph{Logify mode.}
-Create a new logified structure from text:
+Create a new logified structure from a document:
 \begin{verbatim}
-python main.py from_text_to_logic --text "document.txt"
+python main.py logify --fpath "document.pdf"
+python main.py logify --fpath "document.txt" --opath "output.json"
 \end{verbatim}
 
 \paragraph{Query mode.}
-Ask questions, optionally adding new text:
+Ask questions over a logified document:
 \begin{verbatim}
-python main.py query --query "Is X true?"
-python main.py query --query "Is X true?" --text "additional_text.txt"
+python main.py query --fpath "document.pdf" --query "Is X true?"
+python main.py query --fpath "doc.pdf" --query "Is X true?" --k 20
 \end{verbatim}
 
-In query mode with additional text, the system first updates the logified structure (Section~\ref{sec:from_text_to_logic}), then processes the query.
+In query mode, the system loads or creates the logified structure, translates the query to a formal constraint, and invokes the MaxSAT solver to determine the answer.
 
 
 \subsection{OpenIE Extraction with Stanford CoreNLP}
