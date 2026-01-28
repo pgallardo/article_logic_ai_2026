@@ -385,7 +385,193 @@ def run_experiment(
     Returns:
         Experiment results dictionary matching Logify output format
     """
-    pass
+    # Use default model if not specified
+    if model_name is None:
+        model_name = rag_config.DEFAULT_MODEL
+
+    # Ensure results directory exists
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Load dataset
+    print(f"Loading dataset from {dataset_path}...")
+    dataset = load_contractnli_dataset(dataset_path)
+
+    documents = dataset.get("documents", [])
+    labels = dataset.get("labels", {})
+
+    print(f"  Found {len(documents)} documents")
+    print(f"  Found {len(labels)} hypotheses")
+
+    # Limit documents
+    documents = documents[:num_docs]
+    print(f"  Processing {len(documents)} documents")
+
+    # Load SBERT model
+    print(f"Loading SBERT model: {rag_config.SBERT_MODEL}")
+    sbert_model = load_sbert_model(rag_config.SBERT_MODEL)
+
+    # Initialize results (matching Logify format)
+    timestamp = datetime.now().isoformat()
+    results = {
+        "metadata": {
+            "timestamp": timestamp,
+            "model": model_name,
+            "temperature": temperature,
+            "chunk_size": rag_config.CHUNK_SIZE,
+            "overlap": rag_config.OVERLAP,
+            "top_k": rag_config.TOP_K,
+            "sbert_model": rag_config.SBERT_MODEL,
+            "num_documents": len(documents),
+            "num_hypotheses": len(labels),
+            "num_pairs": len(documents) * len(labels)
+        },
+        "document_metrics": [],
+        "results": []
+    }
+
+    # Output file (with timestamp)
+    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = RESULTS_DIR / f"experiment_{timestamp_str}.json"
+
+    # Process documents
+    total_pairs = 0
+    total_correct = 0
+
+    for doc_idx, doc in enumerate(documents):
+        doc_id = doc.get("id", doc_idx)
+        doc_text = doc.get("text", "")
+        annotations = doc.get("annotation_sets", [{}])[0].get("annotations", {})
+
+        print(f"\n[{doc_idx + 1}/{len(documents)}] Processing document {doc_id}")
+        print(f"  Text length: {len(doc_text)} chars")
+
+        # Skip empty documents
+        if not doc_text or not doc_text.strip():
+            print(f"  [SKIP] Empty document text")
+            continue
+
+        # Process document (chunk and encode)
+        doc_start_time = time.time()
+        try:
+            chunks, chunk_embeddings = process_document(doc_text, sbert_model)
+            doc_process_latency = time.time() - doc_start_time
+            doc_process_error = None
+            print(f"  Created {len(chunks)} chunks in {doc_process_latency:.2f}s")
+        except Exception as e:
+            print(f"  [ERROR] Document processing failed: {e}")
+            chunks = None
+            chunk_embeddings = None
+            doc_process_latency = time.time() - doc_start_time
+            doc_process_error = str(e)
+
+        # Process hypotheses
+        query_latency_total = 0.0
+        doc_correct = 0
+        doc_total = 0
+
+        for hyp_key, hyp_info in labels.items():
+            hypothesis_text = hyp_info.get("hypothesis", "")
+
+            # Get ground truth
+            annotation = annotations.get(hyp_key, {})
+            choice = annotation.get("choice", "NotMentioned")
+            evidence_spans = annotation.get("spans", [])
+
+            ground_truth = get_ground_truth_label(choice)
+            amount_evidence = len(evidence_spans)
+
+            # Query
+            if chunks is not None and chunk_embeddings is not None:
+                query_result = process_single_hypothesis(
+                    hypothesis_text=hypothesis_text,
+                    chunk_embeddings=chunk_embeddings,
+                    chunks=chunks,
+                    sbert_model=sbert_model,
+                    model_name=model_name,
+                    temperature=temperature
+                )
+                prediction = query_result.get("prediction")
+                confidence = query_result.get("confidence")
+                query_latency = query_result.get("query_latency_sec", 0.0)
+                query_error = query_result.get("error")
+            else:
+                prediction = None
+                confidence = None
+                query_latency = 0.0
+                query_error = doc_process_error
+
+            query_latency_total += query_latency
+
+            # Check correctness
+            is_correct = (prediction == ground_truth) if prediction else False
+            if prediction:
+                doc_total += 1
+                total_pairs += 1
+                if is_correct:
+                    doc_correct += 1
+                    total_correct += 1
+
+            # Store result (matching Logify format)
+            result_entry = {
+                "doc_id": doc_id,
+                "hypothesis_key": hyp_key,
+                "hypothesis_text": hypothesis_text,
+                "prediction": prediction,
+                "confidence": confidence,
+                "ground_truth": ground_truth,
+                "amount_evidence": amount_evidence,
+                "error": query_error
+            }
+            results["results"].append(result_entry)
+
+            # Print progress
+            status = "✓" if is_correct else ("✗" if prediction else "?")
+            print(f"    [{status}] {hyp_key}: pred={prediction}, gt={ground_truth}, conf={confidence}")
+
+        # Document summary
+        doc_accuracy = doc_correct / doc_total if doc_total > 0 else 0.0
+        print(f"  Document accuracy: {doc_correct}/{doc_total} = {doc_accuracy:.2%}")
+        print(f"  Document process latency: {doc_process_latency:.2f}s")
+        print(f"  Query latency total: {query_latency_total:.2f}s")
+
+        # Store document-level metrics (matching Logify format)
+        doc_metrics = {
+            "doc_id": doc_id,
+            "text_length": len(doc_text),
+            "num_chunks": len(chunks) if chunks else 0,
+            "doc_process_latency_sec": doc_process_latency,
+            "doc_process_error": doc_process_error,
+            "query_latency_total_sec": query_latency_total,
+            "doc_correct": doc_correct,
+            "doc_total": doc_total,
+            "doc_accuracy": doc_accuracy
+        }
+        results["document_metrics"].append(doc_metrics)
+
+        # Save intermediate results
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+
+    # Final summary
+    overall_accuracy = total_correct / total_pairs if total_pairs > 0 else 0.0
+    results["metadata"]["total_correct"] = total_correct
+    results["metadata"]["total_evaluated"] = total_pairs
+    results["metadata"]["overall_accuracy"] = overall_accuracy
+
+    print(f"\n{'='*60}")
+    print(f"EXPERIMENT COMPLETE")
+    print(f"{'='*60}")
+    print(f"Documents processed: {len(documents)}")
+    print(f"Pairs evaluated: {total_pairs}")
+    print(f"Correct predictions: {total_correct}")
+    print(f"Overall accuracy: {overall_accuracy:.2%}")
+    print(f"Results saved to: {output_path}")
+
+    # Final save
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+
+    return results
 
 
 # =============================================================================
@@ -398,7 +584,58 @@ def main():
 
     Parses arguments and runs the experiment.
     """
-    pass
+    parser = argparse.ArgumentParser(
+        description="Run RAG baseline evaluation on ContractNLI dataset",
+        epilog="Output format matches experiment_logify_contract_NLI.py for comparison."
+    )
+    parser.add_argument(
+        "--dataset-path",
+        required=True,
+        help="Path to ContractNLI JSON file (e.g., contract-nli/dev.json)"
+    )
+    parser.add_argument(
+        "--model",
+        default=rag_config.DEFAULT_MODEL,
+        help=f"LLM model name (default: {rag_config.DEFAULT_MODEL})"
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0,
+        help="Sampling temperature (default: 0)"
+    )
+    parser.add_argument(
+        "--num-docs",
+        type=int,
+        default=20,
+        help="Number of documents to process (default: 20)"
+    )
+
+    args = parser.parse_args()
+
+    # Validate API key
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        print("Error: OPENROUTER_API_KEY environment variable not set")
+        return 1
+
+    # Validate dataset path
+    if not Path(args.dataset_path).exists():
+        print(f"Error: Dataset not found: {args.dataset_path}")
+        return 1
+
+    try:
+        run_experiment(
+            dataset_path=args.dataset_path,
+            model_name=args.model,
+            temperature=args.temperature,
+            num_docs=args.num_docs
+        )
+        return 0
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
 
 
 if __name__ == "__main__":
