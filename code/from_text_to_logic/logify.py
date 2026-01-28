@@ -7,16 +7,31 @@ This module orchestrates the two-stage text-to-logic pipeline:
   Stage 2: Convert text + triples to logic using LLM (logic_converter.py)
 
 Supports multiple document formats: PDF, DOCX, TXT, and plain text input.
+
+Usage (from repo root):
+    python code/from_text_to_logic/logify.py document.txt --api-key sk-...
+
+Usage (from code directory):
+    python from_text_to_logic/logify.py document.txt --api-key sk-...
 """
 
 import json
 import os
+import sys
 import argparse
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from openie_extractor import OpenIEExtractor
-from logic_converter import LogicConverter
+# Add code directory to Python path for imports to work from any location
+_script_dir = Path(__file__).resolve().parent
+_code_dir = _script_dir.parent
+if str(_code_dir) not in sys.path:
+    sys.path.insert(0, str(_code_dir))
+if str(_script_dir) not in sys.path:
+    sys.path.insert(0, str(_script_dir))
+
+from from_text_to_logic.openie_extractor import OpenIEExtractor
+from from_text_to_logic.logic_converter import LogicConverter
 
 
 def extract_text_from_document(file_path: str) -> str:
@@ -86,7 +101,7 @@ def extract_text_from_document(file_path: str) -> str:
 class LogifyConverter:
     """Orchestrates the two-stage text-to-logic conversion pipeline."""
 
-    def __init__(self, api_key: str, model: str = "gpt-5.2", temperature: float = 0.1, reasoning_effort: str = "medium", max_tokens: int = 64000):
+    def __init__(self, api_key: str, model: str = "gpt-5.2", temperature: float = 0.1, reasoning_effort: str = "medium", max_tokens: int = 128000):
         """
         Initialize the pipeline with both stages.
 
@@ -95,7 +110,7 @@ class LogifyConverter:
             model (str): Model to use (default: gpt-5.2 with extended thinking)
             temperature (float): Sampling temperature for LLM (default: 0.1, ignored for reasoning models)
             reasoning_effort (str): Reasoning effort for gpt-5.2/o1/o3 models (default: medium)
-            max_tokens (int): Maximum tokens in response (default: 64000)
+            max_tokens (int): Maximum tokens in response (default: 128000)
         """
         # Stage 1: OpenIE extraction
         self.extractor = OpenIEExtractor()
@@ -172,8 +187,8 @@ def main():
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=64000,
-        help="Maximum tokens in response (default: 64000)"
+        default=128000,
+        help="Maximum tokens in response (default: 128000)"
     )
     parser.add_argument("--output", default=None, help="Output JSON file path (default: auto-generated based on input file)")
 
