@@ -10,11 +10,9 @@ Large language models (LLMs) provide natural-language interfaces for such tasks,
 This conflation is the source of their unreliability.
 LLMs hallucinate facts, preferring external knowledge to the input document~\citep{ji2023hallucination}; miss information in long contexts, prioritizing the start and end while neglecting the middle~\citep{liu2024lost}; and produce plausible but logically unsound conclusions~\citep{wei2022chain}.
 
-A common mitigation is retrieval-augmented generation (RAG), where relevant
-passages are retrieved and fed to an LLM at query time. But when logical
-constraints are \emph{scattered} across a long document, retrieval may miss
-critical pieces, and the LLM must reason over incomplete or inconsistent
-context. The result is unreliable answers with no formal guarantees.
+While recent work has improved LLM reasoning---chain-of-thought prompting elicits step-by-step inference~\citep{wei2022chain}, self-consistency aggregates over reasoning paths~\citep{wang2023selfconsistency}---neuro-symbolic methods achieve the largest gains by translating natural language into formal representations and delegating reasoning to symbolic solvers~\citep{pan2023logiclm, olausson2023linc}. 
+However, these approaches formalize the problem anew at each query and assume the document/input text is relatively short. 
+Retrieval-augmented generation (RAG) addresses length but offers no solution when logical constraints are \emph{scattered} across a long document, e.g. a non-disclosure clause on page 3 may interact with an exception on page 12. 
 
 We propose a different paradigm: \emph{logify} the document once, then reason
 symbolically over the resulting structure. Our pipeline extracts atomic
