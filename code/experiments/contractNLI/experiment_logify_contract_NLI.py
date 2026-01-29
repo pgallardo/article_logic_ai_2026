@@ -42,6 +42,9 @@ RESULTS_DIR = _script_dir / "results_logify_contract_NLI"
 # Default document IDs to process
 DEFAULT_DOC_IDS = [3, 7, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 27, 28, 29, 32, 33, 35, 37, 39]
 
+# Fixed model for logification
+LOGIFY_MODEL = "openai/gpt-5.2"
+
 
 def load_contractnli_dataset(dataset_path: str) -> Dict[str, Any]:
     """Load ContractNLI dataset from JSON file."""
@@ -68,7 +71,6 @@ def logify_document(
     text: str,
     doc_id: int,
     api_key: str,
-    model: str,
     temperature: float,
     reasoning_effort: str,
     max_tokens: int,
@@ -100,7 +102,7 @@ def logify_document(
 
     converter = LogifyConverter(
         api_key=api_key,
-        model=model,
+        model=LOGIFY_MODEL,
         temperature=temperature,
         reasoning_effort=reasoning_effort,
         max_tokens=max_tokens
@@ -317,7 +319,6 @@ def run_experiment(
                 text=doc_text,
                 doc_id=doc_id,
                 api_key=api_key,
-                model=model,
                 temperature=temperature,
                 reasoning_effort=reasoning_effort,
                 max_tokens=max_tokens,
