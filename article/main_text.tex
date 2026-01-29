@@ -83,8 +83,6 @@ Our architecture follows a modular design with three components: (1) \texttt{fro
 
 This module implements the extraction of natural language text into the weighted logified structure in three stages.
 
-\subsubsection{Three-Stage Extraction Pipeline}
-
 \paragraph{Stage 1: Relation Triple Extraction.}
 We use Stanford CoreNLP's OpenIE system \cite{angeli2015openie} via the Stanza Python interface \cite{qi2020stanza} to extract subject-predicate-object triples from the text. This provides structured relational information that can help guide proposition identification. We first apply native Stanza coreference resolution to handle pronominal references (e.g. replacing "They" with "Alice"), to ensure that triples consistently refer to canonical entities rather than pronouns. As a fallback, we use Stanza's dependency parse for sentences where OpenIE fails to extract triples (e.g., intransitive verbs with adverbs). Triples are formatted as \texttt{[subject, predicate, object]}.
 
