@@ -54,7 +54,7 @@ We use Boolean polynomial rings, computable via tools like PolyBoRi
 assumption-based truth maintenance system (ATMS) \cite{deKleer1986} compactly 
 represents multiple consistent assignments under evolving constraints—conceptually 
 parallel to our notion of ring homomorphisms $\phi: R(T) \to \mathbb{F}_2$ 
-as a connsistent assignment.
+as a consistent assignment.
 
 \paragraph{Weighted reasoning and model counting.}
 When soft constraints carry confidences, we connect to weighted Max-SAT 
@@ -67,88 +67,52 @@ principled route to ranking readings by plausibility and quantifying underdeterm
 \begin{figure}[h!]
     \centering
     \includegraphics[width=0.95\linewidth]{article/structure.jpeg}
-    \caption{Logify system architecture. The document is processed once through a two-stage pipeline: (1) OpenIE triple extraction with coreference resolution, and (2) LLM-based conversion to propositions and constraints. At query time, the user's question is translated to a propositional formula (using SBERT retrieval over the schema), and the MaxSAT solver determines entailment, contradiction, or uncertainty.}
-    \label{fig:placeholder}
+    \caption{The document is processed once through a three-stage pipeline: (1) we extract relational triples from Stanford OpenIE, (2) we pass the text and triples to an LLM (GPT-5.2) once to extract atomic propositions,  hard constraints, and soft constraints, and (3) we assign weights via SBERT retrieval and LLM verification. At query time, the user's question is translated to a propositional formula (using SBERT retrieval over the translations of the atomic propositions), and the MaxSAT solver determines entailment, contradiction, or uncertainty.}
+    \label{fig:arch}
 \end{figure}
 
 \section{System Architecture}
 \label{sec:system}
 
-We first describe the system architecture, deferring formal definitions to Section~\ref{sec:framework}. The architecture follows a modular design with three components: (1) \texttt{from\_text\_to\_logic}, which logifies text into propositions and constraints; (2) \texttt{logic\_solver}, which performs reasoning via weighted Max-SAT; and (3) \texttt{interface\_with\_user}, which handles natural language interaction. Figure~\ref{fig:architecture} illustrates the overall pipeline.
+Our architecture follows a modular design with three components: (1) \texttt{from\_text\_to\_logic}, which logifies text into propositions and constraints;  (2) \texttt{interface\_with\_user}, which handles natural language interaction for queries, and (3) \texttt{logic\_solver}, which performs reasoning via weighted Max-SAT. Figure~\ref{fig:arch} illustrates the overall pipeline.
 
-\begin{figure}[t]
-\centering
-% TODO: Insert architecture diagram
-\caption{System architecture. The reference text is logified once into propositions and constraints. At query time, the LLM translates the user's question into a formal query, the solver reasons over the logified structure, and the result is interpreted back into natural language.}
-\label{fig:architecture}
-\end{figure}
 
 
 \subsection{From Text to Logic}
 \label{sec:from_text_to_logic}
 
-This module implements the extraction pipeline $\Pi$ (formalized in Definition~\ref{def:pipeline}), transforming natural language text into a logified structure. The pipeline operates in two stages.
+This module implements the extraction of natural language text into the weighted logified structure in three stages.
 
-\subsubsection{Two-Stage Extraction Pipeline}
+\subsubsection{Relation Triple Extraction}
+We use Stanford CoreNLP's OpenIE system \cite{angeli2015openie} via the Stanza Python interface \cite{qi2020stanza} to extract subject-predicate-object triples from the text. This provides structured relational information that can help guide proposition identification. We first apply native Stanza coreference resolution to handle pronominal references (e.g. replacing "They" with "Alice"), to ensure that triples consistently refer to canonical entities rather than pronouns. As a fallback, we use Stanza's dependency parse for sentences where OpenIE fails to extract triples (e.g., intransitive verbs with adverbs). Triples are formatted as \texttt{[subject, predicate, object]}.
 
-\paragraph{Stage 1: Relation Triple Extraction.}
-We use Stanford CoreNLP's OpenIE system \cite{angeli2015openie} via the Stanza Python interface \cite{qi2020stanza} to extract subject-predicate-object triples from the text. This provides structured relational information that guides proposition identification. Critically, we first apply native Stanza coreference resolution to handle pronominal references, ensuring that triples consistently refer to canonical entities rather than pronouns. We then use Stanza's dependency parse as a fallback for sentences where OpenIE fails to extract triples (e.g., intransitive verbs with adverbs). Triples are formatted as compact JSON arrays \texttt{[subject, predicate, object, sentence\_index]} to minimize token usage when passed to the LLM. Implementation details are provided in Appendix~\ref{sec:openie}.
-
-\paragraph{Stage 2: LLM-Based Logic Conversion.}
-The original text $T$ and the extracted triples are jointly provided to a large language model (e.g., GPT-4o, GPT-5.2, or o3-mini). For reasoning models (GPT-5.x, o1, o3), we configure the reasoning effort level (low/medium/high) and use the \texttt{developer} role for system instructions; for standard models, we use \texttt{system} role with temperature control. The LLM performs semantic analysis to identify atomic propositions $\mathcal{P}(T)$, hard constraints $\mathcal{C}(T)$, and soft constraints $\mathcal{S}(T)$. The OpenIE triples serve as structural scaffolding, helping the LLM identify key entities and relationships while ensuring faithful grounding in the source text. The prompt includes few-shot examples demonstrating the expected extraction format (Appendices~\ref{sec:prompt} and \ref{sec:exemplar}).
-
-\subsubsection{Proposition Extraction}
-Given text $T$, we extract atomic propositions $\mathcal{P}(T) = \{P_1, \ldots, P_n\}$. Each proposition is paired with its natural language meaning, forming a \emph{schema}:
-\[
-\texttt{schema} = \{P_i \mapsto \text{``natural language description of } P_i\text{''}\}
-\]
-This schema serves as the interface between the symbolic solver and the LLM: the solver operates over $P_i$; the LLM uses the schema to translate between natural language and formal queries.
-
-\subsubsection{Constraint Extraction}
-From the text, we extract:
-\begin{itemize}
-    \item Hard constraints $\mathcal{C}(T)$: encoded as mandatory clauses
-    \item Soft constraints $\mathcal{S}(T)$: identified by linguistic cues but extracted without weights
-\end{itemize}
-The classification into hard versus soft is based on linguistic cues: definite language (``is,'' ``must,'' ``always'') yields hard constraints; hedged language (``typically,'' ``may,'' ``is intended to'') yields soft constraints.
+\subsubsection{LLM-Based Logic Conversion}
+The original text $T$ and the extracted triples are jointly provided to a large language model (GPT-5.2 by default). The LLM performs semantic analysis to identify atomic propositions $\mathcal{P}(T)$, hard constraints $\mathcal{C}(T)$, and soft constraints $\mathcal{S}(T)$---crucially, soft constraints are extracted \emph{without} weights at this stage.
 
 \subsubsection{Weight Assignment}
-Soft constraints are extracted \emph{without} weights during the initial logification. Weight assignment is performed as a separate stage using an evidence-based retrieval and LLM verification pipeline. Specifically, for each constraint $Q$ (both hard and soft), we:
-\begin{enumerate}
-    \item Chunk the original document and pre-compute SBERT embeddings \cite{reimers2019sbert} (model: \texttt{all-MiniLM-L6-v2})
-    \item Retrieve the top-$k$ chunks most similar to the constraint's natural language translation ($k=10$ by default)
-    \item Prompt an LLM with the retrieved chunks, asking a YES/NO verification question: ``Does this document excerpt provide clear evidence supporting this claim?''
-    \item Extract logprobs for YES and NO tokens from the response
-    \item Repeat the process for the \emph{negated} constraint: ``It is not the case that [Q]''
-    \item Compute confidence via binary softmax: $w(Q) = \frac{P(\text{YES} \mid Q)}{P(\text{YES} \mid Q) + P(\text{YES} \mid \neg Q) + \epsilon}$
-\end{enumerate}
-This produces a weight $w(Q) \in (0,1)$ reflecting how strongly the document supports $Q$. The output is stored as a triplet $[\text{prob\_yes\_orig}, \text{prob\_yes\_neg}, \text{confidence}]$ for transparency. The full algorithm is detailed in Appendix~\ref{sec:weights}. This separation is deliberate: the LLM identifies \emph{which} constraints are defeasible based on linguistic cues (e.g., ``sometimes,'' ``typically''), while the weight assignment module quantifies \emph{how strongly} the text supports each constraint.
+The final stage assigns confidence weights to all constraints using an evidence-based retrieval and LLM verification pipeline. For each constraint $Q$, we: (1) chunk the original document and pre-compute SBERT embeddings \cite{reimers2019sbert} (model: \texttt{all-MiniLM-L6-v2}); (2) retrieve the top-$k$ chunks most similar to the constraint's natural language translation ($k=10$ by default); (3) prompt an LLM with the retrieved chunks, asking a YES/NO verification question: ``Does this document excerpt provide clear evidence supporting this claim?''; (4) extract logprobs for YES and NO tokens from the response; (5) repeat for the \emph{negated} constraint: ``It is not the case that [Q]''; and (6) compute confidence via binary softmax: $w(Q) = P(\text{YES} \mid Q) / (P(\text{YES} \mid Q) + P(\text{YES} \mid \neg Q) + \epsilon)$, where $\epsilon$ is a small constant for numerical stability. This produces a weight $w(Q) \in (0,1)$ reflecting how strongly the document supports $Q$. The separation is deliberate: the LLM identifies \emph{which} constraints are defeasible based on linguistic cues, while the weight assignment module quantifies \emph{how strongly} the text supports each constraint. The output is stored as a triplet $[\text{prob\_yes\_orig}, \text{prob\_yes\_neg}, \text{confidence}]$ for transparency, where $\text{confidence}$ is the calibrated score used for downstream reasoning.
 
 \subsubsection{Output: The Logified Structure}
-The module outputs a JSON structure with rich provenance metadata:
+The module outputs a JSON structure with rich provenance metadata. After Stage 3, the weighted structure includes:
 \begin{verbatim}
 {"primitive_props": [
    {"id": "P_1", "translation": "...",
-    "evidence": "...", "explanation": "..."}],
+    "evidence": "...",
+    "explanation": "..."}],
  "hard_constraints": [
    {"id": "H_1", "formula": "P_1 -> P_2",
-    "translation": "...", "evidence": "...",
-    "reasoning": "..."}],
+    "translation": "...",
+    "evidence": "...",
+    "reasoning": "...",
+    "weight": [0.95, 0.12, 0.89]}],
  "soft_constraints": [
    {"id": "S_1", "formula": "P_3 -> P_4",
-    "translation": "...", "evidence": "...",
-    "reasoning": "..."}]}
+    "translation": "...",
+    "evidence": "...",
+    "reasoning": "...",
+    "weight": [0.82, 0.45, 0.65]}]}
 \end{verbatim}
-Note that soft constraints are extracted without weights; weight assignment is a separate stage (Appendix~\ref{sec:weights}). The full extraction prompt and a worked example are provided in Appendices~\ref{sec:prompt} and \ref{sec:exemplar}.
-
-\subsubsection{Incremental Updates}
-The module supports incremental updates via an \texttt{update} function. Given new text $T'$ or user-provided constraints, the system:
-\begin{enumerate}
-    \item Extracts new propositions and adds them to $\mathcal{P}(T)$
-    \item Extracts new constraints and adds them to $\mathcal{C}(T)$ or $\mathcal{S}(T)$
-    \item Updates the schema with new proposition meanings
-\end{enumerate}
-Algebraically, this corresponds to extending the knowledge algebra (Section~\ref{sec:updates}).
+The \texttt{weight} field contains $[\text{prob\_yes\_orig}, \text{prob\_yes\_neg}, \text{confidence}]$ as described above. See Appendix~\ref{sec:implementation} for specific details on implementation.
 
 
 \subsection{Logic Solver}
@@ -238,7 +202,7 @@ This follows the self-refinement approach of \cite{pan2023logiclm}, but our refi
 
 A key design principle is the strict separation between language understanding and logical reasoning, implemented as three modules:
 \begin{itemize}
-    \item \texttt{from\_text\_to\_logic}: Orchestrates extraction via \texttt{LogifyConverter}, which chains \texttt{OpenIEExtractor} (Stage 1: coreference + triple extraction) and \texttt{LogicConverter} (Stage 2: LLM-based logic conversion). Weight assignment is handled separately by \texttt{assign\_weights}.
+    \item \texttt{from\_text\_to\_logic}: Orchestrates extraction via \texttt{LogifyConverter}, which chains \texttt{OpenIEExtractor} (Stage 1: coreference + triple extraction), \texttt{LogicConverter} (Stage 2: LLM-based logic conversion), and \texttt{assign\_weights} (Stage 3: weight assignment via SBERT retrieval and LLM verification).
     \item \texttt{logic\_solver}: Contains \texttt{LogicEncoder} (formula parsing, CNF conversion, WCNF encoding) and \texttt{LogicSolver} (entailment/consistency checking via PySAT RC2).
     \item \texttt{interface\_with\_user}: Provides \texttt{translate\_query} for NL-to-formula translation with SBERT-based proposition retrieval.
 \end{itemize}
@@ -325,7 +289,7 @@ Hard constraints are encoded as polynomial equations over $\mathbb{F}_2$. The en
 P \land Q &\mapsto PQ \\
 P \lor Q &\mapsto P + Q + PQ \\
 \neg P &\mapsto 1 + P \\
-P \rightarrow Q &\mapsto P(1+Q)
+P \rightarrow Q &\mapsto 1 + P + PQ
 \end{align*}
 Let $\mathcal{I}_{\mathcal{C}}(T)$ be the ideal generated by these encodings. A constraint $C$ being ``enforced'' corresponds to its polynomial lying in the ideal.
 
