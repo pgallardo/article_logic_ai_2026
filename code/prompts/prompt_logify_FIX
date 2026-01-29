@@ -257,6 +257,20 @@ OUTPUT JSON
       "translation": "If Dr. Martinez follows the guidelines and the patient has a documented cardiac history, then Dr. Martinez makes sure the patient receives an ECG. And if Dr. Yang follows the guidelines and the patient has a documented cardiac history, then Dr. Yang makes sure the patient receives an ECG",
       "evidence": "In Sentence 3, 'The official guidelines only mandate this when cardiac history is documented', where 'this' refers to making sure the patient receives an ECG",
       "reasoning": "Because this constraint is true for all doctors, we have to flatten the logic to obtain the constraint in propositional logic. It is instantiated for Dr. Martinez and Dr. Yang, the two doctors mentioned in the text"
+    },
+    {
+      "id": "H_5",
+      "formula": "¬(P_2 ∧ P_3)",
+      "translation": "The patient cannot simultaneously present with chest pain that is clearly musculoskeletal AND chest pain that is not clearly musculoskeletal in origin",
+      "evidence": "Semantic relationship: P_2 and P_3 are defined as logical complements based on Sentence 1",
+      "reasoning": "This is a semantic constraint derived from the meaning of the propositions. P_2 is defined as chest pain that is NOT clearly musculoskeletal, while P_3 is chest pain that IS clearly musculoskeletal. These are mutually exclusive by definition—the pain cannot be both clearly and not clearly musculoskeletal at the same time"
+    },
+    {
+      "id": "H_6",
+      "formula": "¬(P_4 ∧ P_6)",
+      "translation": "The patient cannot be both under 40 years old and over 65 years old",
+      "evidence": "Semantic relationship between P_4 (under 40) and P_6 (over 65) based on common-sense knowledge of age",
+      "reasoning": "This is a semantic constraint from real-world knowledge. A person's age is a single value at any point in time, so being under 40 and over 65 are mutually exclusive states. This constraint is not stated in the text but follows necessarily from the meaning of the propositions"
     }
   ],
   "soft_constraints": [
@@ -265,7 +279,7 @@ OUTPUT JSON
       "formula": "P_6 ⟹ P_10",
       "translation": "If the patient is over 65 years old, then Dr. Yang makes sure the patient receives an ECG",
       "evidence": "In Sentence 2, from '...although Dr. Yang only sometimes believes this'",
-      "reasoning": "Although it is a statement of belief, the text seems to intend to speak about how Dr. Yang acts. The word 'sometimes' indicates this is a soft constraint, not a hard rule.",
+      "reasoning": "Although it is a statement of belief, the text seems to intend to speak about how Dr. Yang acts. The word 'sometimes' indicates this is a soft constraint, not a hard rule."
     }
   ]
 }
@@ -498,6 +512,20 @@ OUTPUT JSON
       "translation": "If an experiment involves hazardous materials, it should be conducted with a partner present",
       "evidence": "Sentence 7: 'The lab director believes that all experiments involving hazardous materials should be conducted with a partner present...'",
       "reasoning": "The word 'should' in safety policy indicates a mandatory requirement. Although framed as the director's belief, it translates to policy/action obligations for hazardous material handling"
+    },
+    {
+      "id": "H_9",
+      "formula": "P_20 ⟺ ¬P_22",
+      "translation": "The experiment is conducted with a partner present if and only if the researcher does not work alone",
+      "evidence": "Semantic relationship between P_20 (partner present) and P_22 (works alone)",
+      "reasoning": "This is a semantic constraint derived from the meaning of the propositions. Having a partner present and working alone are logically contradictory states—they are exact opposites by definition. If a partner is present, the researcher is not alone; if the researcher is alone, no partner is present. This bidirectional relationship must be captured as a hard constraint"
+    },
+    {
+      "id": "H_10",
+      "formula": "P_12 ⟹ ¬P_11",
+      "translation": "If lab equipment is low-risk, it is not required to be inspected weekly",
+      "evidence": "Sentence 4: 'Lab equipment should be inspected weekly, but monthly inspections are generally acceptable for low-risk items'",
+      "reasoning": "This semantic constraint captures the exception relationship between the general rule (weekly inspection) and the low-risk exception. The word 'but' signals that low-risk items are exempt from the weekly requirement. Note that this hard constraint works with S_2 (the soft constraint for monthly inspections being acceptable for low-risk items)"
     }
   ],
   "soft_constraints": [
