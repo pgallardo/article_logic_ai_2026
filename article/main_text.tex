@@ -5,21 +5,14 @@ We propose a neuro-symbolic framework for logical reasoning over long-form docum
 \section{Introduction}
 
 Reliable reasoning over text remains a core challenge in AI.
-Given a document---a contract, medical guideline, or technical specification---users need to determine whether a query is entailed, contradicted, or undetermined by the text.
+Given a document---a contract, medical guideline, or technical specification---users need to determine whether a query is entailed, contradicted, or underdetermined by the text.
 Large language models (LLMs) provide natural-language interfaces for such tasks, but they conflate two fundamentally different problems: \emph{language semantics} (extracting meaning from text) and \emph{logical reasoning} (deriving valid conclusions from premises stated in the text).
 This conflation is the source of their unreliability.
-While LLMs perform well for semantics, they have been shown to be poor for reasoning. 
-LLMs hallucinate facts, preferring external knowledge over the input document~\citep{ji2023hallucination}; miss information in long contexts, prioritizing the start and end while neglecting the middle~\citep{liu2024lost}; and produce plausible but logically unsound conclusions~\citep{wei2022chain}.
+LLMs hallucinate facts, preferring external knowledge to the input document~\citep{ji2023hallucination}; miss information in long contexts, prioritizing the start and end while neglecting the middle~\citep{liu2024lost}; and produce plausible but logically unsound conclusions~\citep{wei2022chain}.
 
-Neuro-symbolic methods distinguish between language semantics and logical reasoning. , see ~\citep{pan2023logiclm, olausson2023linc}, achieve the largest gains by translating natural language into formal representations and delegating reasoning to symbolic solvers. 
-However, these approaches reconstruct the formalization at each query and assume the input documents are relatively small.
-While retrieval-augmented generation (RAG) handles large documents it does not handle \emph{scattering}, when logical constraints may be scattered across a long document. 
-E.g. a non-disclosure clause on page 3 may interact with an exception on page 12.
-Neuro-symbolic methods are limited to short documents. 
+Neuro-symbolic methods address this by separating language semantics from logical reasoning: they translate natural language into formal representations and delegate inference to symbolic solvers~\citep{yang2025neurosymbolic}. However, these approaches reconstruct the formalization at each query and assume the full problem fits within the context window. Retrieval-augmented generation (RAG) handles document length but not \emph{scattering}---a non-disclosure clause on page 3 may interact with an exception on page 12---and retrieval cannot guarantee all relevant pieces are surfaced.
 
-We propose a novel nuero-symbolic method: \emph{logify} the document once, then reason symbolically over the resulting structure. 
-Our pipeline extracts from the document, a propositional calculus consisting of: propositional letters corresponding to atomic statements, a set of hard constraints that must hold, and a set of soft constraints that may hold with confidence weights in the interval $(0,1)$. 
-This structure supports faithful reaonsing for queries about entailment,  satisfiability, and quantifies uncertainty via a weighted Max-SAT solver.
+We propose a different approach: \emph{logify} the document once, then reason symbolically over the resulting structure. Our pipeline extracts atomic propositions, hard constraints (definite statements that must hold), and soft constraints (defeasible statements with weights measuring uncertainty). This structure supports faithful reasoning---entailment, satisfiability, uncertainty quantification---via a weighted Max-SAT solver.
 
 \paragraph{Contributions.}
 \begin{enumerate}
