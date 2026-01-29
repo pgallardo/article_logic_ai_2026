@@ -39,6 +39,9 @@ from logic_solver import LogicSolver
 CACHE_DIR = _script_dir / "cache"
 RESULTS_DIR = _script_dir / "results_logify_contract_NLI"
 
+# Default document IDs to process
+DEFAULT_DOC_IDS = [3, 7, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 27, 28, 29, 32, 33, 35, 37, 39]
+
 
 def load_contractnli_dataset(dataset_path: str) -> Dict[str, Any]:
     """Load ContractNLI dataset from JSON file."""
@@ -215,7 +218,7 @@ def query_hypothesis(
 def run_experiment(
     dataset_path: str,
     api_key: str,
-    model: str = "gpt-5-nano",
+    query_model: str = "openai/gpt-4o",
     weights_model: str = "gpt-4o",
     temperature: float = 0.1,
     reasoning_effort: str = "medium",
@@ -223,7 +226,7 @@ def run_experiment(
     query_max_tokens: int = 64000,
     k_weights: int = 10,
     k_query: int = 20,
-    num_docs: int = 20
+    doc_ids: List[int] = None
 ) -> Dict[str, Any]:
     """
     Run the ContractNLI experiment.
@@ -231,7 +234,7 @@ def run_experiment(
     Args:
         dataset_path: Path to ContractNLI JSON file
         api_key: API key for LLM calls
-        model: Model for logification and query translation
+        query_model: Model for query translation
         weights_model: Model for weight assignment (must support logprobs)
         temperature: Sampling temperature
         reasoning_effort: Reasoning effort for reasoning models
@@ -239,7 +242,7 @@ def run_experiment(
         query_max_tokens: Max tokens for query translation
         k_weights: Top-k chunks for weight assignment
         k_query: Top-k propositions for query translation
-        num_docs: Number of documents to process
+        doc_ids: List of document IDs to process (default: DEFAULT_DOC_IDS)
 
     Returns:
         Experiment results dict
@@ -258,9 +261,12 @@ def run_experiment(
     print(f"  Found {len(documents)} documents")
     print(f"  Found {len(labels)} hypotheses")
 
-    # Limit documents
-    documents = documents[:num_docs]
-    print(f"  Processing {len(documents)} documents")
+    # Filter documents by ID
+    if doc_ids is None:
+        doc_ids = DEFAULT_DOC_IDS
+    doc_id_set = set(doc_ids)
+    documents = [doc for doc in documents if doc.get("id") in doc_id_set]
+    print(f"  Processing {len(documents)} documents with IDs: {doc_ids}")
 
     # Initialize results
     timestamp = datetime.now().isoformat()
