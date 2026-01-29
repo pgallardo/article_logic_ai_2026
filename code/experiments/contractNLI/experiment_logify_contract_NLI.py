@@ -39,6 +39,12 @@ from logic_solver import LogicSolver
 CACHE_DIR = _script_dir / "cache"
 RESULTS_DIR = _script_dir / "results_logify_contract_NLI"
 
+# Default document IDs to process
+DEFAULT_DOC_IDS = [3, 7, 9, 10, 12, 13, 14, 15, 16, 17, 19, 20, 27, 28, 29, 32, 33, 35, 37, 39]
+
+# Fixed model for logification
+LOGIFY_MODEL = "openai/gpt-5.2"
+
 
 def load_contractnli_dataset(dataset_path: str) -> Dict[str, Any]:
     """Load ContractNLI dataset from JSON file."""
@@ -65,7 +71,6 @@ def logify_document(
     text: str,
     doc_id: int,
     api_key: str,
-    model: str,
     temperature: float,
     reasoning_effort: str,
     max_tokens: int,
@@ -97,7 +102,7 @@ def logify_document(
 
     converter = LogifyConverter(
         api_key=api_key,
-        model=model,
+        model=LOGIFY_MODEL,
         temperature=temperature,
         reasoning_effort=reasoning_effort,
         max_tokens=max_tokens
@@ -215,7 +220,7 @@ def query_hypothesis(
 def run_experiment(
     dataset_path: str,
     api_key: str,
-    model: str = "gpt-5-nano",
+    query_model: str = "openai/gpt-5-nano",
     weights_model: str = "gpt-4o",
     temperature: float = 0.1,
     reasoning_effort: str = "medium",
@@ -223,7 +228,7 @@ def run_experiment(
     query_max_tokens: int = 64000,
     k_weights: int = 10,
     k_query: int = 20,
-    num_docs: int = 20
+    doc_ids: List[int] = None
 ) -> Dict[str, Any]:
     """
     Run the ContractNLI experiment.
@@ -231,7 +236,7 @@ def run_experiment(
     Args:
         dataset_path: Path to ContractNLI JSON file
         api_key: API key for LLM calls
-        model: Model for logification and query translation
+        query_model: Model for query translation
         weights_model: Model for weight assignment (must support logprobs)
         temperature: Sampling temperature
         reasoning_effort: Reasoning effort for reasoning models
@@ -239,7 +244,7 @@ def run_experiment(
         query_max_tokens: Max tokens for query translation
         k_weights: Top-k chunks for weight assignment
         k_query: Top-k propositions for query translation
-        num_docs: Number of documents to process
+        doc_ids: List of document IDs to process (default: DEFAULT_DOC_IDS)
 
     Returns:
         Experiment results dict
@@ -258,16 +263,20 @@ def run_experiment(
     print(f"  Found {len(documents)} documents")
     print(f"  Found {len(labels)} hypotheses")
 
-    # Limit documents
-    documents = documents[:num_docs]
-    print(f"  Processing {len(documents)} documents")
+    # Filter documents by ID
+    if doc_ids is None:
+        doc_ids = DEFAULT_DOC_IDS
+    doc_id_set = set(doc_ids)
+    documents = [doc for doc in documents if doc.get("id") in doc_id_set]
+    print(f"  Processing {len(documents)} documents with IDs: {doc_ids}")
 
     # Initialize results
     timestamp = datetime.now().isoformat()
     results = {
         "metadata": {
             "timestamp": timestamp,
-            "model": model,
+            "logify_model": LOGIFY_MODEL,
+            "query_model": query_model,
             "weights_model": weights_model,
             "temperature": temperature,
             "reasoning_effort": reasoning_effort,
@@ -275,6 +284,7 @@ def run_experiment(
             "query_max_tokens": query_max_tokens,
             "k_weights": k_weights,
             "k_query": k_query,
+            "doc_ids": doc_ids,
             "num_documents": len(documents),
             "num_hypotheses": len(labels),
             "num_pairs": len(documents) * len(labels)
@@ -310,7 +320,6 @@ def run_experiment(
                 text=doc_text,
                 doc_id=doc_id,
                 api_key=api_key,
-                model=model,
                 temperature=temperature,
                 reasoning_effort=reasoning_effort,
                 max_tokens=max_tokens,
@@ -344,7 +353,7 @@ def run_experiment(
             ground_truth = get_ground_truth_label(choice)
             amount_evidence = len(evidence_spans)
 
-            # Query
+            # Query (uses query_model)
             if logified_structure is not None:
                 json_path = str(get_cached_logified_path(doc_id))
                 query_result = query_hypothesis(
@@ -352,7 +361,7 @@ def run_experiment(
                     logified_structure=logified_structure,
                     json_path=json_path,
                     api_key=api_key,
-                    model=model,
+                    model=query_model,
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
                     max_tokens=query_max_tokens,
@@ -460,10 +469,11 @@ def main():
         default=os.environ.get("OPENROUTER_API_KEY"),
         help="API key for LLM calls (default: OPENROUTER_API_KEY env var)"
     )
+    # Note: Logification model is fixed to LOGIFY_MODEL (openai/gpt-5.2) and cannot be changed
     parser.add_argument(
-        "--model",
-        default="gpt-5-nano",
-        help="Model for logification and query (default: gpt-5-nano)"
+        "--query-model",
+        default="openai/gpt-5-nano",
+        help="Model for query translation (default: openai/gpt-5-nano). Logification uses fixed model: openai/gpt-5.2"
     )
     parser.add_argument(
         "--weights-model",
@@ -507,10 +517,10 @@ def main():
         help="Top-k propositions for query (default: 20)"
     )
     parser.add_argument(
-        "--num-docs",
-        type=int,
-        default=20,
-        help="Number of documents to process (default: 20)"
+        "--doc-ids",
+        type=str,
+        default=None,
+        help="Comma-separated list of document IDs to process (default: predefined list of 20 docs)"
     )
 
     args = parser.parse_args()
@@ -525,11 +535,16 @@ def main():
         print(f"Error: Dataset not found: {args.dataset_path}")
         return 1
 
+    # Parse doc_ids if provided
+    doc_ids = None
+    if args.doc_ids:
+        doc_ids = [int(x.strip()) for x in args.doc_ids.split(",")]
+
     try:
         run_experiment(
             dataset_path=args.dataset_path,
             api_key=args.api_key,
-            model=args.model,
+            query_model=args.query_model,
             weights_model=args.weights_model,
             temperature=args.temperature,
             reasoning_effort=args.reasoning_effort,
@@ -537,7 +552,7 @@ def main():
             query_max_tokens=args.query_max_tokens,
             k_weights=args.k_weights,
             k_query=args.k_query,
-            num_docs=args.num_docs
+            doc_ids=doc_ids
         )
         return 0
     except Exception as e:

@@ -5,64 +5,56 @@ We propose a neuro-symbolic framework for logical reasoning over long-form docum
 \section{Introduction}
 
 Reliable reasoning over text remains a core challenge in AI.
-Given a document---a contract, medical guideline, or technical specification---users need to determine whether a query is entailed, contradicted, or undetermined by the text.
+Given a document---a contract, medical guideline, or technical specification---users need to determine whether a query is entailed, contradicted, or underdetermined by the text.
 Large language models (LLMs) provide natural-language interfaces for such tasks, but they conflate two fundamentally different problems: \emph{language semantics} (extracting meaning from text) and \emph{logical reasoning} (deriving valid conclusions from premises stated in the text).
 This conflation is the source of their unreliability.
-While LLMs perform well for semantics, they have been shown to be poor for reasoning. 
-LLMs hallucinate facts, preferring external knowledge over the input document~\citep{ji2023hallucination}; miss information in long contexts, prioritizing the start and end while neglecting the middle~\citep{liu2024lost}; and produce plausible but logically unsound conclusions~\citep{wei2022chain}.
+LLMs hallucinate facts, preferring external knowledge to the input document~\citep{ji2023hallucination}; miss information in long contexts, prioritizing the start and end while neglecting the middle~\citep{liu2024lost}; and produce plausible but logically unsound conclusions~\citep{huang2023reasoning}.
 
-Neuro-symbolic methods distinguish between language semantics and logical reasoning. , see ~\citep{pan2023logiclm, olausson2023linc}, achieve the largest gains by translating natural language into formal representations and delegating reasoning to symbolic solvers. 
-However, these approaches reconstruct the formalization at each query and assume the input documents are relatively small.
-While retrieval-augmented generation (RAG) handles large documents it does not handle \emph{scattering}, when logical constraints may be scattered across a long document. 
-E.g. a non-disclosure clause on page 3 may interact with an exception on page 12.
-Neuro-symbolic methods are limited to short documents. 
+A recent survey identifies neuro-symbolic methods, which separate language semantics from logical reasoning, as the most effective paradigm for improving reasoning in LLMs~\citep{yang2025neurosymbolic}. One class of neuro-symbolic methods translates natural language into formal representations, delegates inference to symbolic solvers, and translates results back---the LLM serves as a bridge between natural language and formal logic. However, these approaches have been evaluated on short reasoning problems—the standard benchmarks (FOLIO, ProofWriter, PrOntoQA, AR-LSAT, LogicalDeduction, ReClor) contain examples of a few hundred tokens. Even if retrieval-augmented generation (RAG) is employed to handle longer documents, it may fail to capture logical constraints scattered across the text. For example, a non-disclosure clause on page 3 may interact with an exception on page 12, and retrieval cannot guarantee that all relevant pieces are brought into context.
 
-We propose a novel nuero-symbolic method: \emph{logify} the document once, then reason symbolically over the resulting structure. 
-Our pipeline extracts from the document, a propositional calculus consisting of: propositional letters corresponding to atomic statements, a set of hard constraints that must hold, and a set of soft constraints that may hold with confidence weights in the interval $(0,1)$. 
-This structure supports faithful reaonsing for queries about entailment,  satisfiability, and quantifies uncertainty via a weighted Max-SAT solver.
+To handle large documents, we propose a different approach: \emph{logify} the document once, then reason symbolically over the resulting structure. Our pipeline extracts atomic propositions, hard constraints (definite statements that must hold), and soft constraints (defeasible statements with weights measuring uncertainty). This structure supports faithful reasoning---entailment, satisfiability, uncertainty quantification---via a weighted Max-SAT solver.
 
 \paragraph{Contributions.}
 \begin{enumerate}
-    \item An algebraic framework for representing text as a finite logical theory
-    with hard and soft constraints (Section~\ref{sec:framework}).
     \item A system architecture that logifies text once and supports repeated
     querying via weighted Max-SAT (Section~\ref{sec:system}).
     \item Experiments on logical reasoning and document-level NLI benchmarks,
     demonstrating consistent gains over RAG and neuro-symbolic baselines, with
     the largest improvements on long documents (Section~\ref{sec:experiments}).
+    \item An algebraic framework for representing the finite logical theory
+    with hard and soft constraints as an algebraic structure (Section~\ref{sec:framework}).
 \end{enumerate}
 
 \subsection{Related Work}
 \label{sec:related_work}
 
 \paragraph{Neuro-symbolic logical reasoning.}
-Recent work combines LLMs with symbolic solvers to improve logical reasoning. 
-Logic-LM \cite{pan2023logiclm} translates natural-language problems into symbolic 
-formulations (logic programs, FOL, CSP, SAT) and delegates reasoning to deterministic 
-solvers, achieving significant gains over chain-of-thought prompting. LINC 
-\cite{olausson2023linc} focuses on first-order logic with Prover9, providing 
-detailed error analysis of failure modes. Both systems formalize problems 
-\emph{per query}; in contrast, our approach logifies the text once and supports 
-repeated querying. Moreover, these systems treat all constraints as hard; we 
-introduce soft constraints with confidence weights, enabling reasoning under 
-uncertainty.
+Recent work combines LLMs with symbolic solvers to improve logical reasoning.
+Logic-LM++ \citep{parmar2024logiclmpp} extends Logic-LM \citep{pan2023logiclm} with
+multi-step refinement, achieving 78.9\% on FOLIO (204 examples, $\sim$75 tokens each)
+and 79.7\% on ProofWriter (600 examples, $\sim$100 tokens each).
+LINC \citep{olausson2023linc} uses first-order logic with Prover9, reaching
+87\% on ProofWriter with GPT-4. Both systems formalize problems \emph{per query}
+on short benchmarks; in contrast, our approach logifies the document once and supports
+repeated querying over long texts. Moreover, these systems treat all constraints as hard;
+we introduce soft constraints with confidence weights, enabling reasoning under uncertainty.
 
 \paragraph{Tool-augmented LLMs.}
-A broader line of work augments LLMs with external tools for faithful computation. 
-PAL \cite{gao2023pal} and Program-of-Thought \cite{chen2023pot} use code execution 
-for arithmetic reasoning. SatLM \cite{ye2023satlm} targets satisfiability problems. 
-Our work extends this paradigm to logical reasoning over natural-language text, 
-with a principled distinction between hard and soft constraints.
+A broader line of work augments LLMs using external tools for faithful computation.
+PAL \citep{gao2023pal} and Program-of-Thought \citep{chen2023pot} use code execution
+for arithmetic reasoning. SatLM \citep{ye2023satlm} targets satisfiability problems.
+Logic-of-Thought \citep{liu2024lot} injects propositional logic to generate augmented prompts, and let an LLM reason.
+These have been shown to perform better than Chain-of-Thought baselines.
 
 \paragraph{Algebraic and proof-theoretic foundations.}
 Our framework builds on algebraic proof systems, where polynomial encodings yield 
 certificates of propositional unsatisfiability \cite{CleggEdmondsImpagliazzo1996}. 
 We use Boolean polynomial rings, computable via tools like PolyBoRi 
-\cite{brickenstein2009polybori}. From the ``many readings'' perspective, de Kleer's 
+\cite{brickenstein2009polybori}. From the model-theoretic perspective, de Kleer's 
 assumption-based truth maintenance system (ATMS) \cite{deKleer1986} compactly 
-represents multiple consistent contexts under evolving constraints—conceptually 
-parallel to our interpretation of ring homomorphisms $\phi: R(T) \to \mathbb{F}_2$ 
-as consistent readings.
+represents multiple consistent assignments under evolving constraints—conceptually 
+parallel to our notion of ring homomorphisms $\phi: R(T) \to \mathbb{F}_2$ 
+as a connsistent assignment.
 
 \paragraph{Weighted reasoning and model counting.}
 When soft constraints carry confidences, we connect to weighted Max-SAT 
@@ -75,14 +67,193 @@ principled route to ranking readings by plausibility and quantifying underdeterm
 \begin{figure}[h!]
     \centering
     \includegraphics[width=0.95\linewidth]{article/structure.jpeg}
-    \caption{Caption}
+    \caption{Logify system architecture. The document is processed once through a two-stage pipeline: (1) OpenIE triple extraction with coreference resolution, and (2) LLM-based conversion to propositions and constraints. At query time, the user's question is translated to a propositional formula (using SBERT retrieval over the schema), and the MaxSAT solver determines entailment, contradiction, or uncertainty.}
     \label{fig:placeholder}
 \end{figure}
+
+\section{System Architecture}
+\label{sec:system}
+
+We first describe the system architecture, deferring formal definitions to Section~\ref{sec:framework}. The architecture follows a modular design with three components: (1) \texttt{from\_text\_to\_logic}, which logifies text into propositions and constraints; (2) \texttt{logic\_solver}, which performs reasoning via weighted Max-SAT; and (3) \texttt{interface\_with\_user}, which handles natural language interaction. Figure~\ref{fig:architecture} illustrates the overall pipeline.
+
+\begin{figure}[t]
+\centering
+% TODO: Insert architecture diagram
+\caption{System architecture. The reference text is logified once into propositions and constraints. At query time, the LLM translates the user's question into a formal query, the solver reasons over the logified structure, and the result is interpreted back into natural language.}
+\label{fig:architecture}
+\end{figure}
+
+
+\subsection{From Text to Logic}
+\label{sec:from_text_to_logic}
+
+This module implements the extraction pipeline $\Pi$ (formalized in Definition~\ref{def:pipeline}), transforming natural language text into a logified structure. The pipeline operates in two stages.
+
+\subsubsection{Two-Stage Extraction Pipeline}
+
+\paragraph{Stage 1: Relation Triple Extraction.}
+We use Stanford CoreNLP's OpenIE system \cite{angeli2015openie} via the Stanza Python interface \cite{qi2020stanza} to extract subject-predicate-object triples from the text. This provides structured relational information that guides proposition identification. Critically, we first apply native Stanza coreference resolution to handle pronominal references, ensuring that triples consistently refer to canonical entities rather than pronouns. We then use Stanza's dependency parse as a fallback for sentences where OpenIE fails to extract triples (e.g., intransitive verbs with adverbs). Triples are formatted as compact JSON arrays \texttt{[subject, predicate, object, sentence\_index]} to minimize token usage when passed to the LLM. Implementation details are provided in Appendix~\ref{sec:openie}.
+
+\paragraph{Stage 2: LLM-Based Logic Conversion.}
+The original text $T$ and the extracted triples are jointly provided to a large language model (e.g., GPT-4o, GPT-5.2, or o3-mini). For reasoning models (GPT-5.x, o1, o3), we configure the reasoning effort level (low/medium/high) and use the \texttt{developer} role for system instructions; for standard models, we use \texttt{system} role with temperature control. The LLM performs semantic analysis to identify atomic propositions $\mathcal{P}(T)$, hard constraints $\mathcal{C}(T)$, and soft constraints $\mathcal{S}(T)$. The OpenIE triples serve as structural scaffolding, helping the LLM identify key entities and relationships while ensuring faithful grounding in the source text. The prompt includes few-shot examples demonstrating the expected extraction format (Appendices~\ref{sec:prompt} and \ref{sec:exemplar}).
+
+\subsubsection{Proposition Extraction}
+Given text $T$, we extract atomic propositions $\mathcal{P}(T) = \{P_1, \ldots, P_n\}$. Each proposition is paired with its natural language meaning, forming a \emph{schema}:
+\[
+\texttt{schema} = \{P_i \mapsto \text{``natural language description of } P_i\text{''}\}
+\]
+This schema serves as the interface between the symbolic solver and the LLM: the solver operates over $P_i$; the LLM uses the schema to translate between natural language and formal queries.
+
+\subsubsection{Constraint Extraction}
+From the text, we extract:
+\begin{itemize}
+    \item Hard constraints $\mathcal{C}(T)$: encoded as mandatory clauses
+    \item Soft constraints $\mathcal{S}(T)$: identified by linguistic cues but extracted without weights
+\end{itemize}
+The classification into hard versus soft is based on linguistic cues: definite language (``is,'' ``must,'' ``always'') yields hard constraints; hedged language (``typically,'' ``may,'' ``is intended to'') yields soft constraints.
+
+\subsubsection{Weight Assignment}
+Soft constraints are extracted \emph{without} weights during the initial logification. Weight assignment is performed as a separate stage using an evidence-based retrieval and LLM verification pipeline. Specifically, for each constraint $Q$ (both hard and soft), we:
+\begin{enumerate}
+    \item Chunk the original document and pre-compute SBERT embeddings \cite{reimers2019sbert} (model: \texttt{all-MiniLM-L6-v2})
+    \item Retrieve the top-$k$ chunks most similar to the constraint's natural language translation ($k=10$ by default)
+    \item Prompt an LLM with the retrieved chunks, asking a YES/NO verification question: ``Does this document excerpt provide clear evidence supporting this claim?''
+    \item Extract logprobs for YES and NO tokens from the response
+    \item Repeat the process for the \emph{negated} constraint: ``It is not the case that [Q]''
+    \item Compute confidence via binary softmax: $w(Q) = \frac{P(\text{YES} \mid Q)}{P(\text{YES} \mid Q) + P(\text{YES} \mid \neg Q) + \epsilon}$
+\end{enumerate}
+This produces a weight $w(Q) \in (0,1)$ reflecting how strongly the document supports $Q$. The output is stored as a triplet $[\text{prob\_yes\_orig}, \text{prob\_yes\_neg}, \text{confidence}]$ for transparency. The full algorithm is detailed in Appendix~\ref{sec:weights}. This separation is deliberate: the LLM identifies \emph{which} constraints are defeasible based on linguistic cues (e.g., ``sometimes,'' ``typically''), while the weight assignment module quantifies \emph{how strongly} the text supports each constraint.
+
+\subsubsection{Output: The Logified Structure}
+The module outputs a JSON structure with rich provenance metadata:
+\begin{verbatim}
+{"primitive_props": [
+   {"id": "P_1", "translation": "...",
+    "evidence": "...", "explanation": "..."}],
+ "hard_constraints": [
+   {"id": "H_1", "formula": "P_1 -> P_2",
+    "translation": "...", "evidence": "...",
+    "reasoning": "..."}],
+ "soft_constraints": [
+   {"id": "S_1", "formula": "P_3 -> P_4",
+    "translation": "...", "evidence": "...",
+    "reasoning": "..."}]}
+\end{verbatim}
+Note that soft constraints are extracted without weights; weight assignment is a separate stage (Appendix~\ref{sec:weights}). The full extraction prompt and a worked example are provided in Appendices~\ref{sec:prompt} and \ref{sec:exemplar}.
+
+\subsubsection{Incremental Updates}
+The module supports incremental updates via an \texttt{update} function. Given new text $T'$ or user-provided constraints, the system:
+\begin{enumerate}
+    \item Extracts new propositions and adds them to $\mathcal{P}(T)$
+    \item Extracts new constraints and adds them to $\mathcal{C}(T)$ or $\mathcal{S}(T)$
+    \item Updates the schema with new proposition meanings
+\end{enumerate}
+Algebraically, this corresponds to extending the knowledge algebra (Section~\ref{sec:updates}).
+
+
+\subsection{Logic Solver}
+\label{sec:logic_solver}
+
+This module encodes the logified structure as a weighted Max-SAT problem and invokes a solver.
+
+\subsubsection{Encoding}
+The encoding follows the Max-SAT formulation (Section~\ref{sec:maxsat}):
+\begin{itemize}
+    \item Each proposition $P_i$ becomes a Boolean variable $x_i$
+    \item Each hard constraint becomes a mandatory clause (infinite weight)
+    \item Each soft constraint with confidence $w_k$ becomes a weighted clause
+\end{itemize}
+The encoding is written in standard WCNF (weighted conjunctive normal form) format, compatible with modern Max-SAT solvers.
+
+\subsubsection{Supported Query Types}
+Given a user query $Q$ (translated to a formal constraint), the solver supports:
+\begin{itemize}
+    \item \textbf{Entailment}: Is $Q$ true in all consistent readings? \\
+    $\rightarrow$ Add $\neg Q$ as hard clause; check unsatisfiability.
+    
+    \item \textbf{Consistency}: Is $Q$ consistent with the text? \\
+    $\rightarrow$ Add $Q$ as hard clause; check satisfiability.
+    
+    \item \textbf{Optimal reading}: What is the most plausible truth value of $Q$? \\
+    $\rightarrow$ Solve Max-SAT; report $\varphi^*(Q)$ where $\varphi^* = \arg\max W(\varphi)$.
+    
+    \item \textbf{Probability}: What is $\mathrm{Prob}(Q = \text{True})$? \\
+    $\rightarrow$ Weighted model counting over readings where $\varphi(Q) = 1$.
+\end{itemize}
+
+\subsubsection{Solver Interface}
+We use PySAT's RC2 solver \cite{ignatiev2019rc2}, a state-of-the-art core-guided MaxSAT algorithm. The \texttt{LogicEncoder} module:
+\begin{enumerate}
+    \item Parses propositional formulas supporting standard connectives ($\land$, $\lor$, $\neg$, $\Rightarrow$, $\Leftrightarrow$) and converts them to CNF via Negation Normal Form
+    \item Builds a mapping from proposition IDs (e.g., $P_1$) to integer SAT variables
+    \item Encodes hard constraints as mandatory clauses; soft constraints with weights converted to integer log-odds scaling: $\max(1, \lfloor w/(1-w) \times 1000 \rfloor)$
+    \item Hard constraints with weights (from the weight assignment stage) are encoded as soft clauses with 10$\times$ scaled weights to maintain priority
+\end{enumerate}
+The \texttt{LogicSolver} then invokes RC2 to check entailment (add $\neg Q$ as hard clause; check unsatisfiability), consistency (add $Q$ as hard clause; check satisfiability), or optimal reading (solve MaxSAT). For confidence computation on uncertain queries, we compare MaxSAT costs between $Q$ and $\neg Q$: $\text{confidence} = \text{cost}(\neg Q) / (\text{cost}(Q) + \text{cost}(\neg Q))$.
+
+
+\subsection{Interface with User}
+\label{sec:interface}
+
+This module handles all natural language interaction. Crucially, the LLM serves only as a translator—it does not reason about the text content.
+
+\subsubsection{Query Translation}
+Given a natural language query and the schema, the LLM translates the query into a formal constraint over propositions:
+\[
+\texttt{translate}: (\text{NL query}, \text{schema}) \mapsto \text{formal query}
+\]
+The translation module first detects if the query is a Yes/No question (e.g., ``Can the receiving party share information?'') and, if so, converts it to a declarative statement (``The receiving party can share information'') using a preliminary LLM call. This ensures consistent handling of interrogative and declarative inputs. The module then uses SBERT to retrieve the top-$k$ most relevant propositions ($k=20$ by default) and prompts the LLM with Natural Language Inference guidelines to translate the hypothesis into a propositional formula.
+
+For example:
+\begin{itemize}
+    \item NL: ``Can the receiving party share information with third parties?''
+    \item Converted: ``The receiving party can share information with third parties''
+    \item Schema: $\{P_5: \text{``Receiving party may disclose to affiliates''}, \ldots\}$
+    \item Formal: $P_5$ (the proposition most closely matching the claim)
+\end{itemize}
+
+\subsubsection{Result Interpretation}
+After the solver returns a result, the \texttt{SolverResult} object contains:
+\begin{itemize}
+    \item \textbf{answer}: TRUE (entailed), FALSE (contradicted), or UNCERTAIN
+    \item \textbf{confidence}: A score in $[0,1]$ derived from MaxSAT cost comparison
+    \item \textbf{explanation}: Human-readable explanation of the reasoning path (e.g., ``Query is entailed by the hard constraints (KB $\land \neg Q$ is unsatisfiable)'')
+    \item \textbf{model}: The satisfying assignment (if SAT), for debugging
+\end{itemize}
+This structured output can be further translated to natural language via an LLM if needed for user-facing applications.
+
+\subsubsection{Self-Refinement}
+If the solver returns a syntax error (e.g., malformed query), the module invokes a refinement loop:
+\begin{enumerate}
+    \item Parse the error message
+    \item Prompt the LLM to fix the formal query
+    \item Re-submit to solver
+    \item Repeat until success or maximum iterations
+\end{enumerate}
+This follows the self-refinement approach of \cite{pan2023logiclm}, but our refinement is limited to the query translation—the logified structure itself is not modified without explicit user action.
+
+
+\subsection{Separation of Concerns}
+\label{sec:separation}
+
+A key design principle is the strict separation between language understanding and logical reasoning, implemented as three modules:
+\begin{itemize}
+    \item \texttt{from\_text\_to\_logic}: Orchestrates extraction via \texttt{LogifyConverter}, which chains \texttt{OpenIEExtractor} (Stage 1: coreference + triple extraction) and \texttt{LogicConverter} (Stage 2: LLM-based logic conversion). Weight assignment is handled separately by \texttt{assign\_weights}.
+    \item \texttt{logic\_solver}: Contains \texttt{LogicEncoder} (formula parsing, CNF conversion, WCNF encoding) and \texttt{LogicSolver} (entailment/consistency checking via PySAT RC2).
+    \item \texttt{interface\_with\_user}: Provides \texttt{translate\_query} for NL-to-formula translation with SBERT-based proposition retrieval.
+\end{itemize}
+
+The LLM never sees the original text at query time—only the schema (proposition IDs and their natural language translations). All reasoning is performed by the symbolic solver. This ensures:
+\begin{itemize}
+    \item \textbf{Faithfulness}: If the logified structure is correct, answers are provably correct.
+    \item \textbf{Scalability}: Long documents do not burden the query-time context.
+    \item \textbf{Transparency}: The solver's reasoning can be inspected and verified.
+\end{itemize}
 
 \section{Theoretical Framework}
 \label{sec:framework}
 
-We now describe our construction. We adopt the convention that for a reading $\varphi$, $\varphi(q)=1$ is interpreted as $q$ being True and $\varphi(q)=0$ as False.
+We now formalize the concepts introduced in the system description. We adopt the convention that for a reading $\varphi$, $\varphi(q)=1$ is interpreted as $q$ being True and $\varphi(q)=0$ as False.
 
 \subsection{Extraction Pipeline}
 
@@ -108,17 +279,17 @@ where $\mathcal{S}(T)$ is a set of defeasible constraints with associated confid
 \end{definition}
 
 \paragraph{Why propositional logic?}
-We deliberately restrict ourselves to propositional logic because, 
-although it is less expressive than First-Order Logic (FOL), 
-propositional formulations are more reliably extracted from natural 
-language. FOL translation requires choosing predicate arities, variable 
-scopes, and quantifier structures—decisions that introduce semantic 
-ambiguity beyond the LLM's competence. Prior work confirms this: 
-Logic-LM's execution rate drops from 99\% (propositional-like ProofWriter) 
-to 86\% (FOL-based FOLIO), and LINC's error analysis attributes most 
-failures to FOL representation choices. Our experiments also show such 
-behavior; see Table~\ref{tab:propositional_vs_FOL}. By staying propositional, 
-we trade expressiveness for reliability—a favorable trade-off when 
+We deliberately restrict ourselves to propositional logic because,
+although it is less expressive than First-Order Logic (FOL),
+propositional formulations are more reliably extracted from natural
+language. FOL translation requires choosing predicate arities, variable
+scopes, and quantifier structures—decisions that introduce semantic
+ambiguity beyond the LLM's competence. Prior work confirms this:
+Logic-LM's execution rate drops from 99\% (propositional-like ProofWriter)
+to 86\% (FOL-based FOLIO), and LINC's error analysis attributes most
+failures to FOL representation choices. Our experiments also show such
+behavior; see Table~\ref{tab:propositional_vs_FOL}. By staying propositional,
+we trade expressiveness for reliability—a favorable trade-off when
 faithfulness is the goal.
 
 \subsubsection{Proposition Extraction}
@@ -128,7 +299,7 @@ Given a text $T$, we extract atomic propositions that admit unambiguous truth va
 From the text, we extract two types of logical constraints:
 \begin{itemize}
     \item \textbf{Hard constraints} $\mathcal{C}(T)$: constraints the text fully determines (e.g., ``$X$ is defined as $Y$'' yields $X \leftrightarrow Y$; ``$X$ but not $Y$'' yields $X \land \neg Y$).
-    
+
     \item \textbf{Soft constraints} $\mathcal{S}(T)$: constraints the text suggests but does not guarantee. Each soft constraint $C_k$ carries a confidence weight $w_k \in (0,1)$, where higher values indicate stronger textual support.
 \end{itemize}
 
@@ -142,7 +313,7 @@ Given the extraction pipeline, we construct an algebraic representation of all c
 \subsubsection{Free Boolean Ring}
 The free Boolean algebra generated by propositions $P_i$ is presented as the Boolean ring:
 \[
-\mathcal{R}_{\mathrm{free}}(T) := 
+\mathcal{R}_{\mathrm{free}}(T) :=
 \frac{\mathbb{F}_2[P_i \mid P_i \in \mathcal{P}(T)]}
 {\langle P_i^2 + P_i \mid P_i \in \mathcal{P}(T) \rangle}
 \]
@@ -161,7 +332,7 @@ Let $\mathcal{I}_{\mathcal{C}}(T)$ be the ideal generated by these encodings. A 
 \begin{definition}[Knowledge Algebra]
 The \emph{knowledge algebra} of $T$ relative to $\Pi$ is:
 \[
-\mathcal{R}(T) := 
+\mathcal{R}(T) :=
 \frac{\mathcal{R}_{\mathrm{free}}(T)}{\mathcal{I}_{\mathcal{C}}(T)}
 \]
 \end{definition}
@@ -175,7 +346,7 @@ Soft constraints do not eliminate readings; they rank them by plausibility.
 
 For each soft constraint $C_k \in \mathcal{S}(T)$ with confidence $w_k \in (0,1)$, we define its contribution to a reading $\varphi$:
 \[
-\lambda_k(\varphi) = 
+\lambda_k(\varphi) =
 \begin{cases}
 w_k & \text{if } \varphi(c_k) = 1 \quad \text{(satisfied)} \\
 1 - w_k & \text{if } \varphi(c_k) = 0 \quad \text{(violated)}
@@ -226,7 +397,7 @@ A key feature of our framework is support for incremental updates. Given new tex
 \subsubsection{Adding Propositions}
 New propositions $P_{n+1}, \ldots, P_{n+m}$ extend the ring:
 \[
-\mathcal{R}(T \cup T') = 
+\mathcal{R}(T \cup T') =
 \frac{\mathbb{F}_2[P_1, \ldots, P_n, P_{n+1}, \ldots, P_{n+m}]}
 {\mathcal{I}_{\mathcal{C}}(T) + \mathcal{I}_{\mathcal{C}}(T')}
 \]
@@ -248,174 +419,6 @@ This modularity enables:
 
 In the Max-SAT encoding, updates correspond to adding clauses—an operation modern solvers handle incrementally without recomputing from scratch.
 
-\section{System Architecture}
-\label{sec:system}
-
-We now describe the system that implements our framework. The architecture follows a modular design with three components: (1) \texttt{from\_text\_to\_logic}, which logifies text into propositions and constraints; (2) \texttt{logic\_solver}, which performs reasoning via weighted Max-SAT; and (3) \texttt{interface\_with\_user}, which handles natural language interaction. Figure~\ref{fig:architecture} illustrates the overall pipeline.
-
-\begin{figure}[t]
-\centering
-% TODO: Insert architecture diagram
-\caption{System architecture. The reference text is logified once into propositions and constraints. At query time, the LLM translates the user's question into a formal query, the solver reasons over the logified structure, and the result is interpreted back into natural language.}
-\label{fig:architecture}
-\end{figure}
-
-
-\subsection{From Text to Logic}
-\label{sec:from_text_to_logic}
-
-This module implements the extraction pipeline $\Pi$ (Definition~\ref{def:pipeline}), transforming natural language text into a logified structure. The pipeline operates in two stages.
-
-\subsubsection{Two-Stage Extraction Pipeline}
-
-\paragraph{Stage 1: Relation Triple Extraction.}
-We use Stanford CoreNLP's OpenIE system \cite{angeli2015openie} via the Stanza Python interface \cite{qi2020stanza} to extract subject-predicate-object triples from the text. This provides structured relational information that guides proposition identification. Critically, we enable coreference resolution to handle pronominal references, ensuring that triples consistently refer to canonical entities rather than pronouns. Implementation details are provided in Appendix~\ref{sec:openie}.
-
-\paragraph{Stage 2: LLM-Based Logic Conversion.}
-The original text $T$ and the extracted triples are jointly provided to a large language model (e.g., GPT-4, GPT-5, or o3-mini), which performs the semantic analysis required to identify atomic propositions $\mathcal{P}(T)$, hard constraints $\mathcal{C}(T)$, and soft constraints $\mathcal{S}(T)$. The OpenIE triples serve as structural scaffolding, helping the LLM identify key entities and relationships while ensuring faithful grounding in the source text. The prompt includes few-shot examples demonstrating the expected extraction format (Appendices~\ref{sec:prompt} and \ref{sec:exemplar}).
-
-\subsubsection{Proposition Extraction}
-Given text $T$, we extract atomic propositions $\mathcal{P}(T) = \{P_1, \ldots, P_n\}$. Each proposition is paired with its natural language meaning, forming a \emph{schema}:
-\[
-\texttt{schema} = \{P_i \mapsto \text{``natural language description of } P_i\text{''}\}
-\]
-This schema serves as the interface between the symbolic solver and the LLM: the solver operates over $P_i$; the LLM uses the schema to translate between natural language and formal queries.
-
-\subsubsection{Constraint Extraction}
-From the text, we extract:
-\begin{itemize}
-    \item Hard constraints $\mathcal{C}(T)$: encoded as mandatory clauses
-    \item Soft constraints $\mathcal{S}(T)$: identified by linguistic cues but extracted without weights
-\end{itemize}
-The classification into hard versus soft is based on linguistic cues: definite language (``is,'' ``must,'' ``always'') yields hard constraints; hedged language (``typically,'' ``may,'' ``is intended to'') yields soft constraints.
-
-\subsubsection{Weight Assignment}
-Soft constraints are extracted \emph{without} weights during the initial logification. Weight assignment is performed as a separate stage using an evidence-based retrieval and LLM verification pipeline. Specifically, for each soft constraint $Q$, we:
-\begin{enumerate}
-    \item Retrieve relevant text segments using SBERT embeddings \cite{reimers2019sbert}
-    \item Prompt an LLM with the retrieved segments and extract logprobs for YES/NO responses regarding whether the text supports $Q$
-    \item Convert the logprob difference to a confidence score via softmax normalization
-\end{enumerate}
-This produces a weight $w(Q) \in (0,1)$ reflecting how strongly the document supports $Q$. The full algorithm is detailed in Appendix~\ref{sec:weights}. This separation is deliberate: the LLM identifies \emph{which} constraints are defeasible based on linguistic cues (e.g., ``sometimes,'' ``typically''), while the weight assignment module quantifies \emph{how strongly} the text supports each constraint.
-
-\subsubsection{Output: The Logified Structure}
-The module outputs a JSON structure with rich provenance metadata:
-\begin{verbatim}
-{"primitive_props": [
-   {"id": "P_1", "translation": "...",
-    "evidence": "...", "explanation": "..."}],
- "hard_constraints": [
-   {"id": "H_1", "formula": "P_1 -> P_2",
-    "translation": "...", "evidence": "...",
-    "reasoning": "..."}],
- "soft_constraints": [
-   {"id": "S_1", "formula": "P_3 -> P_4",
-    "translation": "...", "evidence": "...",
-    "reasoning": "..."}]}
-\end{verbatim}
-Note that soft constraints are extracted without weights; weight assignment is a separate stage (Appendix~\ref{sec:weights}). The full extraction prompt and a worked example are provided in Appendices~\ref{sec:prompt} and \ref{sec:exemplar}.
-
-\subsubsection{Incremental Updates}
-The module supports incremental updates via an \texttt{update} function. Given new text $T'$ or user-provided constraints, the system:
-\begin{enumerate}
-    \item Extracts new propositions and adds them to $\mathcal{P}(T)$
-    \item Extracts new constraints and adds them to $\mathcal{C}(T)$ or $\mathcal{S}(T)$
-    \item Updates the schema with new proposition meanings
-\end{enumerate}
-Algebraically, this corresponds to extending the knowledge algebra as described in Section~\ref{sec:updates}.
-
-
-\subsection{Logic Solver}
-\label{sec:logic_solver}
-
-This module encodes the logified structure as a weighted Max-SAT problem and invokes a solver.
-
-\subsubsection{Encoding}
-The encoding follows Section~\ref{sec:maxsat}:
-\begin{itemize}
-    \item Each proposition $P_i$ becomes a Boolean variable $x_i$
-    \item Each hard constraint becomes a mandatory clause (infinite weight)
-    \item Each soft constraint with confidence $w_k$ becomes a weighted clause
-\end{itemize}
-The encoding is written in standard WCNF (weighted conjunctive normal form) format, compatible with modern Max-SAT solvers.
-
-\subsubsection{Supported Query Types}
-Given a user query $Q$ (translated to a formal constraint), the solver supports:
-\begin{itemize}
-    \item \textbf{Entailment}: Is $Q$ true in all consistent readings? \\
-    $\rightarrow$ Add $\neg Q$ as hard clause; check unsatisfiability.
-    
-    \item \textbf{Consistency}: Is $Q$ consistent with the text? \\
-    $\rightarrow$ Add $Q$ as hard clause; check satisfiability.
-    
-    \item \textbf{Optimal reading}: What is the most plausible truth value of $Q$? \\
-    $\rightarrow$ Solve Max-SAT; report $\varphi^*(Q)$ where $\varphi^* = \arg\max W(\varphi)$.
-    
-    \item \textbf{Probability}: What is $\mathrm{Prob}(Q = \text{True})$? \\
-    $\rightarrow$ Weighted model counting over readings where $\varphi(Q) = 1$.
-\end{itemize}
-
-\subsubsection{Solver Interface}
-We use PySAT's RC2 solver \cite{ignatiev2019rc2}, a state-of-the-art core-guided MaxSAT algorithm. The module:
-\begin{enumerate}
-    \item Converts the logified structure to WCNF format
-    \item Invokes the solver with the query-augmented formula
-    \item Parses the solver output (satisfying assignment or UNSAT)
-\end{enumerate}
-For confidence computation on uncertain queries, we compare MaxSAT costs between $Q$ and $\neg Q$ to derive normalized confidence scores.
-
-
-\subsection{Interface with User}
-\label{sec:interface}
-
-This module handles all natural language interaction. Crucially, the LLM serves only as a translator—it does not reason about the text content.
-
-\subsubsection{Query Translation}
-Given a natural language query and the schema, the LLM translates the query into a formal constraint over propositions:
-\[
-\texttt{translate}: (\text{NL query}, \text{schema}) \mapsto \text{formal query}
-\]
-For example:
-\begin{itemize}
-    \item NL: ``Is the START system used for children?''
-    \item Schema: $\{P_1: \text{``START is used not for everyone''}\}$
-    \item Formal: $\neg P_1$ (or a new proposition if not in schema)
-\end{itemize}
-
-\subsubsection{Result Interpretation}
-After the solver returns a result, the LLM translates it back to natural language:
-\[
-\texttt{interpret}: (\text{solver output}, \text{schema}) \mapsto \text{NL answer}
-\]
-The solver output includes:
-\begin{itemize}
-    \item The answer (True / False / Unknown)
-    \item Confidence (if soft constraints are involved)
-    \item Relevant propositions (for explanation)
-\end{itemize}
-
-\subsubsection{Self-Refinement}
-If the solver returns a syntax error (e.g., malformed query), the module invokes a refinement loop:
-\begin{enumerate}
-    \item Parse the error message
-    \item Prompt the LLM to fix the formal query
-    \item Re-submit to solver
-    \item Repeat until success or maximum iterations
-\end{enumerate}
-This follows the self-refinement approach of \cite{pan2023logiclm}, but our refinement is limited to the query translation—the logified structure itself is not modified without explicit user action.
-
-
-\subsection{Separation of Concerns}
-\label{sec:separation}
-
-A key design principle is the strict separation between language understanding and logical reasoning, implemented as the following three components: \texttt{from\_text\_to\_logic} (extraction; LLM or rule-based), \texttt{logic\_solver} (reasoning; Max-SAT), and \texttt{interface\_with\_user} (translation; LLM).
-
-The LLM never sees the original text at query time—only the schema. All reasoning is performed by the symbolic solver. This ensures:
-\begin{itemize}
-    \item \textbf{Faithfulness}: If the logified structure is correct, answers are provably correct.
-    \item \textbf{Scalability}: Long documents do not burden the query-time context.
-    \item \textbf{Transparency}: The solver's reasoning can be inspected and verified.
-\end{itemize}
 
 \section{Experiments}
 \label{sec:experiments}
